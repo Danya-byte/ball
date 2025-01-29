@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <base href="/">
     <title>Tilt Ball Game</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
@@ -34,7 +33,6 @@
             align-items: center;
             background: rgba(0,0,0,0.95);
             z-index: 1000;
-            transition: top 0.3s;
         }
 
         #ball {
@@ -112,8 +110,8 @@
 </head>
 <body>
     <div id="startScreen">
-        <h1>Управление наклоном</h1>
-        <button id="startBtn">Начать игру</button>
+        <h1>Tilt Ball Game</h1>
+        <button id="startBtn">Start Game</button>
         <div id="errorMsg" class="error-message"></div>
     </div>
 
@@ -132,6 +130,8 @@
         const SETTINGS = {
             refreshRate: 50,
             sensitivity: 0.3,
+            maxPosition: 95,
+            minPosition: 5,
             debug: true
         };
 
@@ -161,10 +161,8 @@
             document.body.classList.toggle('debug-visible');
         });
 
-        // Проверка датчиков
+        // Проверка доступности датчиков
         async function checkSensors() {
-            addDebugLog('Начало проверки датчиков');
-            
             const sensors = [
                 { 
                     name: 'DeviceOrientation',
@@ -185,53 +183,55 @@
 
             for (const sensor of sensors) {
                 try {
-                    addDebugLog(`Проверка: ${sensor.name}`);
+                    addDebugLog(`Checking sensor: ${sensor.name}`);
                     
                     if (!sensor.obj || !sensor.check()) {
-                        addDebugLog(`${sensor.name} недоступен`);
+                        addDebugLog(`${sensor.name} not available`);
                         continue;
                     }
 
                     const supported = await new Promise(resolve => {
                         sensor.obj.start({ refresh_rate: SETTINGS.refreshRate }, success => {
                             sensor.obj.stop();
-                            addDebugLog(`${sensor.name}: ${success ? 'работает' : 'не отвечает'}`);
                             resolve(success);
+                            addDebugLog(`${sensor.name}: ${success ? 'available' : 'unavailable'}`);
                         });
                     });
 
                     if (supported) {
-                        addDebugLog(`Выбран датчик: ${sensor.name}`);
+                        addDebugLog(`Selected sensor: ${sensor.name}`);
                         return sensor.name;
                     }
                 } catch (e) {
-                    addDebugLog(`Ошибка: ${e.message}`);
+                    addDebugLog(`Sensor error: ${e.message}`);
                 }
             }
             return null;
         }
 
-        // Обработчик данных датчика
+        // Обработка данных датчиков
         function handleSensorData(data) {
             if (!isGameActive) return;
 
-            addDebugLog(`Данные: ${JSON.stringify(data).slice(0, 50)}...`);
-            
             let dx = 0, dy = 0;
             
-            if (currentSensor === 'DeviceOrientation') {
-                dx = data.gamma * SETTINGS.sensitivity;
-                dy = data.beta * SETTINGS.sensitivity;
-            } else if (currentSensor === 'Accelerometer') {
-                dx = data.x * SETTINGS.sensitivity * 0.1;
-                dy = data.y * SETTINGS.sensitivity * 0.1;
-            } else if (currentSensor === 'Gyroscope') {
-                dx = data.x * SETTINGS.sensitivity * 0.05;
-                dy = data.y * SETTINGS.sensitivity * 0.05;
+            switch(currentSensor) {
+                case 'DeviceOrientation':
+                    dx = data.gamma * SETTINGS.sensitivity;
+                    dy = data.beta * SETTINGS.sensitivity;
+                    break;
+                case 'Accelerometer':
+                    dx = data.x * SETTINGS.sensitivity * 0.1;
+                    dy = data.y * SETTINGS.sensitivity * 0.1;
+                    break;
+                case 'Gyroscope':
+                    dx = data.x * SETTINGS.sensitivity * 0.05;
+                    dy = data.y * SETTINGS.sensitivity * 0.05;
+                    break;
             }
 
-            posX = Math.max(2, Math.min(98, posX + dx));
-            posY = Math.max(2, Math.min(98, posY + dy));
+            posX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posX + dx));
+            posY = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posY + dy));
 
             ball.style.left = `${posX}%`;
             ball.style.top = `${posY}%`;
@@ -241,49 +241,49 @@
         function showError(message) {
             errorMsg.textContent = message;
             errorMsg.style.display = 'block';
-            addDebugLog(`ОШИБКА: ${message}`);
+            addDebugLog(`ERROR: ${message}`);
             startBtn.disabled = false;
         }
 
         // Запуск игры
         async function startGame() {
             try {
-                addDebugLog('--- Запуск игры ---');
+                addDebugLog('--- Starting game ---');
                 errorMsg.style.display = 'none';
                 startBtn.disabled = true;
                 isGameActive = false;
 
-                // Проверка устройства
+                // Проверка мобильного устройства
                 if (!/Mobile/.test(navigator.userAgent)) {
-                    throw new Error('Только для мобильных устройств');
+                    throw new Error('Only available on mobile devices');
                 }
 
-                // Поиск рабочего датчика
+                // Проверка датчиков
                 currentSensor = await checkSensors();
                 if (!currentSensor) {
-                    throw new Error('Датчики не обнаружены');
+                    throw new Error('No supported sensors found');
                 }
 
                 // Запрос разрешений для iOS
                 if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    addDebugLog('Запрос разрешения...');
+                    addDebugLog('Requesting permissions...');
                     const permission = await DeviceOrientationEvent.requestPermission();
-                    addDebugLog(`Результат: ${permission}`);
+                    addDebugLog(`Permission result: ${permission}`);
                     
                     if (permission !== 'granted') {
-                        throw new Error('Доступ к датчикам запрещен');
+                        throw new Error('Sensor access denied');
                     }
                 }
 
                 // Инициализация датчика
                 const sensor = Telegram.WebApp[currentSensor];
-                addDebugLog(`Запуск ${currentSensor}`);
+                addDebugLog(`Initializing ${currentSensor}`);
                 
                 sensor.start({ refresh_rate: SETTINGS.refreshRate }, success => {
-                    if (!success) throw new Error('Ошибка запуска датчика');
+                    if (!success) throw new Error('Sensor initialization failed');
                     
                     sensor.on('changed', handleSensorData);
-                    addDebugLog('Датчик активен');
+                    addDebugLog('Sensor activated');
                     
                     startScreen.style.display = 'none';
                     ball.style.display = 'block';
@@ -295,7 +295,7 @@
             }
         }
 
-        // События
+        // Инициализация
         startBtn.addEventListener('click', startGame);
 
         // Блокировка масштабирования
