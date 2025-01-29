@@ -6,7 +6,6 @@
     <title>Tilt Ball Game</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        /* Все стили остаются без изменений */
         :root {
             --bg-color: #1a1a1a;
             --ball-color: #ff4444;
@@ -136,7 +135,6 @@
 <body>
     <div class="device-error" id="deviceError">
         <h2>🚫 Mobile Only!</h2>
-        <p>This game requires a mobile device with gyroscope</p>
         <p>Please open in smartphone or tablet</p>
     </div>
 
@@ -150,31 +148,31 @@
     <button id="debugToggle">Debug</button>
 
     <script>
-        // Проверка устройства должна быть первой
-        function isMobile() {
-            return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-        }
+        // Инициализация Telegram WebApp
+        Telegram.WebApp.ready();
+        Telegram.WebApp.expand();
 
-        // Блокировка ПК перед любой инициализацией
+        // Проверка устройства
+        const isMobile = () => /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+        // Блокировка ПК
         if (!isMobile()) {
             document.getElementById('deviceError').style.display = 'flex';
             document.getElementById('startScreen').style.display = 'none';
             throw new Error('PC access blocked');
         }
 
-        // Инициализация Telegram WebApp
-        Telegram.WebApp.ready();
-        Telegram.WebApp.expand();
-        
-        // Полноэкранный режим после проверки устройства
-        try {
-            if (!Telegram.WebApp.isFullscreen) {
-                Telegram.WebApp.requestFullscreen();
-                log('Fullscreen requested');
+        // Полноэкранный режим
+        const initFullscreen = () => {
+            try {
+                if (!Telegram.WebApp.isFullscreen) {
+                    Telegram.WebApp.requestFullscreen();
+                    log('Fullscreen requested');
+                }
+            } catch (e) {
+                log(`Fullscreen error: ${e.message}`);
             }
-        } catch (e) {
-            log(`Fullscreen error: ${e.message}`);
-        }
+        };
 
         // Обработчики событий
         Telegram.WebApp.onEvent('fullscreenChanged', () => {
@@ -193,15 +191,16 @@
         const debugToggle = document.getElementById('debugToggle');
 
         const SETTINGS = {
-            refreshRate: 60,
             sensitivity: 1.5,
             maxPosition: 98,
             minPosition: 2,
             smoothFactor: 0.12,
             debug: true,
-            vibrationDuration: 30,
-            vibrationCooldown: 500,
-            vibrationThreshold: 3
+            vibration: {
+                duration: 30,
+                cooldown: 500,
+                threshold: 3
+            }
         };
 
         let isGameActive = false;
@@ -214,42 +213,45 @@
         let lastVibration = 0;
 
         // Логирование
-        function log(message) {
+        const log = (message) => {
             if (!SETTINGS.debug) return;
             const timestamp = performance.now().toFixed(1);
             logs.push(`${timestamp}ms: ${message}`);
             debugPanel.innerHTML = logs.slice(-20).join('<br>');
             debugPanel.scrollTop = debugPanel.scrollHeight;
-        }
+        };
 
         // Обработка ошибок
-        function showError(message) {
+        const showError = (message) => {
             errorMsg.textContent = message;
             errorMsg.style.display = 'block';
             log(`ERROR: ${message}`);
-        }
+        };
 
-        // Запрос разрешений
-        async function requestPermission() {
+        // Работа с сенсорами
+        const initSensors = async () => {
             try {
                 if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
-                    const result = await DeviceOrientationEvent.requestPermission();
-                    log(`Permission status: ${result}`);
-                    return result === 'granted';
+                    const status = await DeviceOrientationEvent.requestPermission();
+                    if (status !== 'granted') throw new Error('Permission denied');
                 }
+                
+                window.addEventListener('deviceorientation', handleOrientation);
+                sensorHandler = () => window.removeEventListener('deviceorientation', handleOrientation);
+                
                 return true;
             } catch (e) {
-                log(`Permission error: ${e.message}`);
+                showError(e.message);
                 return false;
             }
-        }
+        };
 
-        // Обработка гироскопа
-        function handleOrientation(event) {
+        // Обработка данных гироскопа
+        const handleOrientation = ({beta, gamma}) => {
             if (!isGameActive) return;
 
-            const beta = Math.max(-90, Math.min(90, event.beta || 0));
-            const gamma = Math.max(-90, Math.min(90, event.gamma || 0));
+            beta = Math.max(-90, Math.min(90, beta || 0));
+            gamma = Math.max(-90, Math.min(90, gamma || 0));
 
             targetX = 50 + (gamma * SETTINGS.sensitivity);
             targetY = 50 + (beta * SETTINGS.sensitivity * 0.8);
@@ -257,29 +259,28 @@
             targetX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, targetX));
             targetY = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, targetY));
 
-            log(`Beta: ${beta.toFixed(1)}°, Gamma: ${gamma.toFixed(1)}°`);
-        }
+            log(`Orientation: X${targetX.toFixed(1)}% Y${targetY.toFixed(1)}%`);
+        };
 
-        // Проверка границ
-        function checkBoundaries() {
+        // Вибрация при границах
+        const checkBoundaries = () => {
             const now = Date.now();
-            const isAtEdge = 
-                posX <= SETTINGS.minPosition + SETTINGS.vibrationThreshold ||
-                posX >= SETTINGS.maxPosition - SETTINGS.vibrationThreshold ||
-                posY <= SETTINGS.minPosition + SETTINGS.vibrationThreshold ||
-                posY >= SETTINGS.maxPosition - SETTINGS.vibrationThreshold;
+            const atEdge = [
+                posX <= SETTINGS.minPosition + SETTINGS.vibration.threshold,
+                posX >= SETTINGS.maxPosition - SETTINGS.vibration.threshold,
+                posY <= SETTINGS.minPosition + SETTINGS.vibration.threshold,
+                posY >= SETTINGS.maxPosition - SETTINGS.vibration.threshold
+            ].some(condition => condition);
 
-            if (isAtEdge && (now - lastVibration) > SETTINGS.vibrationCooldown) {
-                if (navigator.vibrate) {
-                    navigator.vibrate(SETTINGS.vibrationDuration);
-                    lastVibration = now;
-                    log('Vibration triggered');
-                }
+            if (atEdge && now - lastVibration > SETTINGS.vibration.cooldown) {
+                navigator.vibrate?.(SETTINGS.vibration.duration);
+                lastVibration = now;
+                log('Boundary vibration');
             }
-        }
+        };
 
         // Игровой цикл
-        function gameLoop() {
+        const gameLoop = () => {
             if (isGameActive) {
                 posX += (targetX - posX) * SETTINGS.smoothFactor;
                 posY += (targetY - posY) * SETTINGS.smoothFactor;
@@ -290,31 +291,19 @@
                 checkBoundaries();
             }
             requestAnimationFrame(gameLoop);
-        }
+        };
 
         // Запуск игры
-        async function startGame() {
+        const startGame = async () => {
             try {
                 startBtn.disabled = true;
                 errorMsg.style.display = 'none';
 
-                // Дополнительная проверка на мобильное устройство
-                if (!isMobile()) {
-                    throw new Error('Device not supported');
-                }
-
-                const hasPermission = await requestPermission();
-                if (!hasPermission) throw new Error('Permission denied');
-
-                if ('DeviceOrientationEvent' in window) {
-                    window.addEventListener('deviceorientation', handleOrientation);
-                    sensorHandler = () => window.removeEventListener('deviceorientation', handleOrientation);
-                } else {
-                    throw new Error('Sensors not supported');
-                }
-
+                if (!(await initSensors())) return;
+                
                 document.body.classList.add('game-started');
                 isGameActive = true;
+                initFullscreen();
                 log('Game started');
 
             } catch (e) {
@@ -322,17 +311,17 @@
                 startBtn.disabled = false;
                 log(`Start failed: ${e.message}`);
             }
-        }
+        };
 
         // Остановка игры
-        function stopGame() {
-            if (sensorHandler) sensorHandler();
+        const stopGame = () => {
+            sensorHandler?.();
             isGameActive = false;
             document.body.classList.remove('game-started');
             log('Game stopped');
-        }
+        };
 
-        // Инициализация обработчиков
+        // Инициализация
         debugToggle.addEventListener('click', () => {
             debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
         });
@@ -341,8 +330,8 @@
         window.addEventListener('beforeunload', stopGame);
         document.addEventListener('dblclick', e => e.preventDefault());
 
-        // Запуск игрового цикла
         gameLoop();
+        initFullscreen();
     </script>
 </body>
 </html>
