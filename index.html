@@ -132,13 +132,14 @@
 
         const SETTINGS = {
             refreshRate: 60,
-            sensitivity: 1.8,
+            sensitivity: 1.5,
             maxPosition: 98,
             minPosition: 2,
-            smoothFactor: 0.15,
+            smoothFactor: 0.12,
             debug: true,
             vibrationDuration: 30,
-            vibrationCooldown: 500
+            vibrationCooldown: 500,
+            vibrationThreshold: 3
         };
 
         let isGameActive = false;
@@ -186,13 +187,13 @@
         function handleOrientation(event) {
             if (!isGameActive) return;
 
-            // Получаем и нормализуем значения
-            const beta = Math.max(-90, Math.min(90, event.beta || 0));
-            const gamma = Math.max(-90, Math.min(90, event.gamma || 0));
+            // Получение и нормализация значений
+            const beta = Math.max(-90, Math.min(90, event.beta || 0));  // Наклон вперед/назад
+            const gamma = Math.max(-90, Math.min(90, event.gamma || 0)); // Наклон влево/вправо
 
-            // Инверсия по вертикали
+            // Расчет позиции с правильным направлением
             targetX = 50 + (gamma * SETTINGS.sensitivity);
-            targetY = 50 - (beta * SETTINGS.sensitivity * 0.8); // Уменьшаем влияние beta
+            targetY = 50 - (beta * SETTINGS.sensitivity * 0.8); // Инверсия по вертикали
 
             // Ограничение позиции
             targetX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, targetX));
@@ -203,18 +204,17 @@
 
         function checkBoundaries() {
             const now = Date.now();
-            const threshold = 2;
             const isAtEdge = 
-                posX <= SETTINGS.minPosition + threshold ||
-                posX >= SETTINGS.maxPosition - threshold ||
-                posY <= SETTINGS.minPosition + threshold ||
-                posY >= SETTINGS.maxPosition - threshold;
+                posX <= SETTINGS.minPosition + SETTINGS.vibrationThreshold ||
+                posX >= SETTINGS.maxPosition - SETTINGS.vibrationThreshold ||
+                posY <= SETTINGS.minPosition + SETTINGS.vibrationThreshold ||
+                posY >= SETTINGS.maxPosition - SETTINGS.vibrationThreshold;
 
             if (isAtEdge && (now - lastVibration) > SETTINGS.vibrationCooldown) {
                 if (navigator.vibrate) {
                     navigator.vibrate(SETTINGS.vibrationDuration);
                     lastVibration = now;
-                    log('Vibration triggered');
+                    log('Vibration at boundary');
                 }
             }
         }
