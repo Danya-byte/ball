@@ -33,6 +33,7 @@
             align-items: center;
             background: rgba(0,0,0,0.95);
             z-index: 1000;
+            transition: top 0.3s;
         }
 
         #ball {
@@ -145,7 +146,6 @@
         Telegram.WebApp.ready();
         Telegram.WebApp.expand();
 
-        // Логирование в панель отладки
         function addDebugLog(message) {
             if (!SETTINGS.debug) return;
             
@@ -156,34 +156,29 @@
             debugPanel.scrollTop = debugPanel.scrollHeight;
         }
 
-        // Переключение панели отладки
         toggleDebug.addEventListener('click', () => {
             document.body.classList.toggle('debug-visible');
         });
 
-        // Проверка доступности датчиков
         async function checkSensors() {
+            addDebugLog('Starting sensor check...');
+            
             const sensors = [
-                { 
+                {
                     name: 'DeviceOrientation',
                     obj: Telegram.WebApp.DeviceOrientation,
                     check: () => 'DeviceOrientationEvent' in window
                 },
-                { 
+                {
                     name: 'Accelerometer',
                     obj: Telegram.WebApp.Accelerometer,
                     check: () => 'Accelerometer' in window
-                },
-                { 
-                    name: 'Gyroscope',
-                    obj: Telegram.WebApp.Gyroscope,
-                    check: () => 'Gyroscope' in window
                 }
             ];
 
             for (const sensor of sensors) {
                 try {
-                    addDebugLog(`Checking sensor: ${sensor.name}`);
+                    addDebugLog(`Checking ${sensor.name}...`);
                     
                     if (!sensor.obj || !sensor.check()) {
                         addDebugLog(`${sensor.name} not available`);
@@ -193,8 +188,8 @@
                     const supported = await new Promise(resolve => {
                         sensor.obj.start({ refresh_rate: SETTINGS.refreshRate }, success => {
                             sensor.obj.stop();
+                            addDebugLog(`${sensor.name} start result: ${success}`);
                             resolve(success);
-                            addDebugLog(`${sensor.name}: ${success ? 'available' : 'unavailable'}`);
                         });
                     });
 
@@ -209,25 +204,19 @@
             return null;
         }
 
-        // Обработка данных датчиков
         function handleSensorData(data) {
             if (!isGameActive) return;
 
+            addDebugLog(`Sensor data: ${JSON.stringify(data)}`);
+            
             let dx = 0, dy = 0;
             
-            switch(currentSensor) {
-                case 'DeviceOrientation':
-                    dx = data.gamma * SETTINGS.sensitivity;
-                    dy = data.beta * SETTINGS.sensitivity;
-                    break;
-                case 'Accelerometer':
-                    dx = data.x * SETTINGS.sensitivity * 0.1;
-                    dy = data.y * SETTINGS.sensitivity * 0.1;
-                    break;
-                case 'Gyroscope':
-                    dx = data.x * SETTINGS.sensitivity * 0.05;
-                    dy = data.y * SETTINGS.sensitivity * 0.05;
-                    break;
+            if (currentSensor === 'DeviceOrientation') {
+                dx = data.gamma * SETTINGS.sensitivity;
+                dy = data.beta * SETTINGS.sensitivity;
+            } else if (currentSensor === 'Accelerometer') {
+                dx = data.x * SETTINGS.sensitivity * 0.1;
+                dy = data.y * SETTINGS.sensitivity * 0.1;
             }
 
             posX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posX + dx));
@@ -235,9 +224,9 @@
 
             ball.style.left = `${posX}%`;
             ball.style.top = `${posY}%`;
+            ball.style.transform = 'translate(-50%, -50%)';
         }
 
-        // Отображение ошибок
         function showError(message) {
             errorMsg.textContent = message;
             errorMsg.style.display = 'block';
@@ -245,7 +234,6 @@
             startBtn.disabled = false;
         }
 
-        // Запуск игры
         async function startGame() {
             try {
                 addDebugLog('--- Starting game ---');
@@ -253,20 +241,17 @@
                 startBtn.disabled = true;
                 isGameActive = false;
 
-                // Проверка мобильного устройства
                 if (!/Mobile/.test(navigator.userAgent)) {
                     throw new Error('Only available on mobile devices');
                 }
 
-                // Проверка датчиков
                 currentSensor = await checkSensors();
                 if (!currentSensor) {
                     throw new Error('No supported sensors found');
                 }
 
-                // Запрос разрешений для iOS
                 if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    addDebugLog('Requesting permissions...');
+                    addDebugLog('Requesting permission...');
                     const permission = await DeviceOrientationEvent.requestPermission();
                     addDebugLog(`Permission result: ${permission}`);
                     
@@ -275,19 +260,26 @@
                     }
                 }
 
-                // Инициализация датчика
                 const sensor = Telegram.WebApp[currentSensor];
-                addDebugLog(`Initializing ${currentSensor}`);
+                addDebugLog(`Initializing ${currentSensor}...`);
                 
                 sensor.start({ refresh_rate: SETTINGS.refreshRate }, success => {
                     if (!success) throw new Error('Sensor initialization failed');
                     
-                    sensor.on('changed', handleSensorData);
                     addDebugLog('Sensor activated');
                     
-                    startScreen.style.display = 'none';
+                    // Явное позиционирование шарика
                     ball.style.display = 'block';
+                    startScreen.style.display = 'none';
                     isGameActive = true;
+                    
+                    ball.style.left = '50%';
+                    ball.style.top = '50%';
+                    ball.style.transform = 'translate(-50%, -50%)';
+
+                    sensor.on('changed', (data) => {
+                        handleSensorData(data);
+                    });
                 });
 
             } catch (error) {
@@ -295,10 +287,8 @@
             }
         }
 
-        // Инициализация
         startBtn.addEventListener('click', startGame);
 
-        // Блокировка масштабирования
         document.addEventListener('dblclick', e => e.preventDefault(), { passive: false });
         let lastTouchEnd = 0;
         document.addEventListener('touchend', e => {
