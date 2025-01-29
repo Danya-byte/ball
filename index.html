@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <base href="/">
     <title>Universal Tilt Ball</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
@@ -19,6 +19,8 @@
             background: var(--bg-color);
             font-family: Arial, sans-serif;
             color: var(--text-color);
+            touch-action: pan-x pan-y;
+            -ms-touch-action: pan-x pan-y;
         }
 
         #startScreen {
@@ -84,7 +86,7 @@
         const errorMsg = document.getElementById('errorMsg');
 
         const SETTINGS = {
-            refreshRate: 50, // Корректное значение частоты обновления
+            refreshRate: 50,
             sensitivity: 0.3
         };
 
@@ -93,11 +95,24 @@
         let posX = 50;
         let posY = 50;
 
+        // Блокировка масштабирования
+        document.addEventListener('dblclick', function(e) {
+            e.preventDefault();
+        }, { passive: false });
+
+        let lastTouchEnd = 0;
+        document.addEventListener('touchend', function(event) {
+            const now = Date.now();
+            if (now - lastTouchEnd <= 300) {
+                event.preventDefault();
+            }
+            lastTouchEnd = now;
+        }, { passive: false });
+
         // Инициализация Telegram WebApp
         Telegram.WebApp.ready();
         Telegram.WebApp.expand();
 
-        // Проверка поддержки датчиков
         async function checkSensors() {
             const sensors = [
                 {
@@ -136,7 +151,6 @@
             return null;
         }
 
-        // Обработчик данных датчика
         function handleSensorData(data) {
             if (!isGameActive) return;
 
@@ -158,12 +172,10 @@
             ball.style.top = `${posY}%`;
         }
 
-        // Запуск игры
         async function startGame() {
             try {
                 errorMsg.textContent = '';
                 
-                // Проверка платформы
                 if (!navigator.userAgent.match(/Mobile/)) {
                     throw new Error('Игра доступна только на мобильных устройствах');
                 }
@@ -173,7 +185,6 @@
                     throw new Error('Датчики не обнаружены');
                 }
 
-                // Запрос разрешений для iOS
                 if (typeof DeviceOrientationEvent.requestPermission === 'function') {
                     const permission = await DeviceOrientationEvent.requestPermission();
                     if (permission !== 'granted') {
@@ -181,7 +192,6 @@
                     }
                 }
 
-                // Инициализация выбранного датчика
                 const sensor = Telegram.WebApp[currentSensor];
                 sensor.start({ refresh_rate: SETTINGS.refreshRate }, success => {
                     if (!success) throw new Error('Ошибка инициализации датчика');
@@ -200,7 +210,6 @@
             }
         }
 
-        // События
         startBtn.addEventListener('click', startGame);
     </script>
 </body>
