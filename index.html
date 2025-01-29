@@ -6,7 +6,6 @@
     <title>Tilt Ball Game</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        /* Стили остаются без изменений из предыдущего примера */
         :root {
             --bg-color: #1a1a1a;
             --ball-color: #ff4444;
@@ -132,7 +131,7 @@
         const debugToggle = document.getElementById('debugToggle');
 
         const SETTINGS = {
-            refreshRate: 50,
+            refreshRate: 100,
             sensitivity: 1.5,
             maxPosition: 98,
             minPosition: 2,
@@ -146,36 +145,71 @@
         let logs = [];
         let sensorHandler = null;
 
-        Telegram.WebApp.ready();
-        Telegram.WebApp.expand();
+        // Инициализация Telegram Web App
+        function initTelegramWebApp() {
+            try {
+                Telegram.WebApp.ready();
+                Telegram.WebApp.expand();
+                log('Telegram WebApp initialized');
+                log(`Platform: ${Telegram.WebApp.platform}`);
+                log(`WebApp version: ${Telegram.WebApp.version}`);
+            } catch (e) {
+                showError('Failed to initialize Telegram WebApp');
+                log(`Initialization error: ${e.message}`);
+            }
+        }
 
         function log(message) {
             if (!SETTINGS.debug) return;
             const timestamp = performance.now().toFixed(1);
             logs.push(`${timestamp}ms: ${message}`);
-            debugPanel.innerHTML = logs.slice(-15).join('<br>');
+            debugPanel.innerHTML = logs.slice(-20).join('<br>');
             debugPanel.scrollTop = debugPanel.scrollHeight;
         }
 
-        debugToggle.addEventListener('click', () => {
-            debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
-        });
+        function showError(message) {
+            errorMsg.textContent = message;
+            errorMsg.style.display = 'block';
+            log(`ERROR: ${message}`);
+        }
 
         async function requestSensorPermission() {
             try {
-                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    return await DeviceOrientationEvent.requestPermission();
+                log('Requesting sensor permission...');
+                
+                if (typeof DeviceOrientationEvent === 'undefined' || 
+                    typeof DeviceOrientationEvent.requestPermission !== 'function') {
+                    log('Permission API not available');
+                    return 'granted';
                 }
-                return 'granted';
+
+                const result = await DeviceOrientationEvent.requestPermission();
+                log(`Permission result: ${result}`);
+                return result;
             } catch (e) {
                 log(`Permission error: ${e.message}`);
                 return 'denied';
             }
         }
 
-        function handleOrientationData(beta, gamma) {
-            const dx = gamma * SETTINGS.sensitivity * 0.5;
-            const dy = beta * SETTINGS.sensitivity * 0.5 * -1;
+        function handleSensorData(data) {
+            if (!isGameActive) {
+                log('Ignoring sensor data - game not active');
+                return;
+            }
+
+            let dx = 0, dy = 0;
+            
+            if (currentSensor === 'DeviceOrientation') {
+                log(`Orientation data: beta=${data.beta?.toFixed(2)} gamma=${data.gamma?.toFixed(2)}`);
+                dx = (data.gamma || 0) * SETTINGS.sensitivity * 0.5;
+                dy = (data.beta || 0) * SETTINGS.sensitivity * 0.5 * -1;
+            } 
+            else if (currentSensor === 'Accelerometer') {
+                log(`Accelerometer data: x=${data.x?.toFixed(2)} y=${data.y?.toFixed(2)}`);
+                dx = (data.x || 0) * SETTINGS.sensitivity * 0.2;
+                dy = (data.y || 0) * SETTINGS.sensitivity * 0.2;
+            }
 
             posX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posX + dx));
             posY = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posY + dy));
@@ -184,141 +218,145 @@
             ball.style.top = `${posY}%`;
         }
 
-        function handleAccelerometerData(x, y) {
-            const dx = x * SETTINGS.sensitivity * 0.2;
-            const dy = y * SETTINGS.sensitivity * 0.2;
-
-            posX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posX + dx));
-            posY = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posY + dy));
-
-            ball.style.left = `${posX}%`;
-            ball.style.top = `${posY}%`;
-        }
-
-        function startDeviceOrientationTracking() {
+        function startSensor(sensorType) {
             return new Promise((resolve, reject) => {
-                if (!Telegram.WebApp.DeviceOrientation) {
-                    return reject('DeviceOrientation not supported');
-                }
-
-                Telegram.WebApp.DeviceOrientation.start(
-                    { refresh_rate: SETTINGS.refreshRate },
-                    (success) => {
-                        if (!success) return reject('Failed to start DeviceOrientation');
-                        
-                        sensorHandler = function() {
-                            handleOrientationData(this.beta, this.gamma);
-                        };
-                        
-                        Telegram.WebApp.DeviceOrientation.on(
-                            'deviceOrientationChanged',
-                            sensorHandler
-                        );
-                        
-                        resolve();
+                try {
+                    log(`Starting ${sensorType} sensor...`);
+                    
+                    const sensor = Telegram.WebApp[sensorType];
+                    if (!sensor) {
+                        log(`${sensorType} not available`);
+                        return reject(`${sensorType} not supported`);
                     }
-                );
+
+                    if (typeof sensor.start !== 'function' || 
+                        typeof sensor.on !== 'function') {
+                        log(`${sensorType} methods missing`);
+                        return reject(`${sensorType} API incomplete`);
+                    }
+
+                    sensor.start({ refresh_rate: SETTINGS.refreshRate }, (success) => {
+                        if (!success) {
+                            log(`${sensorType} start failed`);
+                            return reject(`Failed to start ${sensorType}`);
+                        }
+
+                        log(`${sensorType} started successfully`);
+                        
+                        const eventName = sensorType === 'DeviceOrientation' 
+                            ? 'deviceOrientationChanged' 
+                            : 'accelerometerChanged';
+
+                        sensorHandler = function() {
+                            handleSensorData({
+                                beta: this.beta,
+                                gamma: this.gamma,
+                                x: this.x,
+                                y: this.y
+                            });
+                        };
+
+                        sensor.on(eventName, sensorHandler);
+                        resolve();
+                    });
+
+                } catch (e) {
+                    log(`${sensorType} error: ${e.message}`);
+                    reject(e);
+                }
             });
         }
 
-        function startAccelerometerTracking() {
-            return new Promise((resolve, reject) => {
-                if (!Telegram.WebApp.Accelerometer) {
-                    return reject('Accelerometer not supported');
-                }
-
-                Telegram.WebApp.Accelerometer.start(
-                    { refresh_rate: SETTINGS.refreshRate },
-                    (success) => {
-                        if (!success) return reject('Failed to start Accelerometer');
-                        
-                        sensorHandler = function() {
-                            handleAccelerometerData(this.x, this.y);
-                        };
-                        
-                        Telegram.WebApp.Accelerometer.on(
-                            'accelerometerChanged',
-                            sensorHandler
-                        );
-                        
-                        resolve();
-                    }
-                );
-            });
-        }
-
-        async function initializeSensor() {
+        async function initializeGame() {
             try {
+                log('Initializing game...');
+                startBtn.disabled = true;
+
+                // Проверка платформы
+                if (!Telegram.WebApp.isVersionAtLeast('6.0')) {
+                    throw new Error('Update Telegram to latest version');
+                }
+
+                // Запрос разрешений
                 const permission = await requestSensorPermission();
                 if (permission !== 'granted') {
                     throw new Error('Sensor access denied');
                 }
 
-                // Пробуем сначала DeviceOrientation
-                try {
-                    await startDeviceOrientationTracking();
-                    currentSensor = 'DeviceOrientation';
-                    log('Using DeviceOrientation sensor');
-                } catch (e) {
-                    // Если не получилось, пробуем Accelerometer
-                    await startAccelerometerTracking();
-                    currentSensor = 'Accelerometer';
-                    log('Using Accelerometer sensor');
+                // Попытка запуска сенсоров
+                const sensors = ['DeviceOrientation', 'Accelerometer'];
+                for (const sensor of sensors) {
+                    try {
+                        await startSensor(sensor);
+                        currentSensor = sensor;
+                        log(`Using ${sensor} sensor`);
+                        break;
+                    } catch (e) {
+                        log(`Failed to start ${sensor}: ${e.message}`);
+                    }
                 }
 
+                if (!currentSensor) {
+                    throw new Error('No sensors available');
+                }
+
+                // Запуск игры
                 document.body.classList.add('game-started');
                 isGameActive = true;
                 log('Game started successfully');
 
             } catch (e) {
-                errorMsg.textContent = e.message || e;
-                errorMsg.style.display = 'block';
+                showError(e.message);
                 startBtn.disabled = false;
-                log(`Error: ${e.message || e}`);
-                throw e;
+                log(`Initialization failed: ${e.message}`);
             }
         }
 
-        function stopSensorTracking() {
+        function stopSensors() {
             if (!currentSensor) return;
-
+            
             try {
+                log(`Stopping ${currentSensor}...`);
                 const sensor = Telegram.WebApp[currentSensor];
-                if (sensor && sensor.stop) {
-                    sensor.stop();
+                
+                if (sensor && typeof sensor.stop === 'function') {
+                    sensor.stop(() => log(`${currentSensor} stopped`));
                 }
-                if (sensor && sensor.off) {
-                    sensor.off(
-                        currentSensor === 'DeviceOrientation' 
-                            ? 'deviceOrientationChanged' 
-                            : 'accelerometerChanged',
-                        sensorHandler
-                    );
+                
+                if (sensor && typeof sensor.off === 'function') {
+                    const eventName = currentSensor === 'DeviceOrientation' 
+                        ? 'deviceOrientationChanged' 
+                        : 'accelerometerChanged';
+                    sensor.off(eventName, sensorHandler);
                 }
+                
+                currentSensor = null;
+                isGameActive = false;
+                
             } catch (e) {
-                log(`Error stopping sensor: ${e.message}`);
+                log(`Error stopping sensors: ${e.message}`);
             }
         }
 
-        async function startGame() {
-            try {
-                startBtn.disabled = true;
-                errorMsg.style.display = 'none';
-                await initializeSensor();
-            } catch (e) {
-                errorMsg.textContent = e.message || e;
-                errorMsg.style.display = 'block';
-                startBtn.disabled = false;
-            }
-        }
+        // Инициализация при загрузке
+        initTelegramWebApp();
 
-        // Очистка при закрытии
-        window.addEventListener('beforeunload', () => {
-            stopSensorTracking();
+        // Обработчики событий
+        debugToggle.addEventListener('click', () => {
+            debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
         });
 
-        startBtn.addEventListener('click', startGame);
-        document.addEventListener('dblclick', e => e.preventDefault());
+        startBtn.addEventListener('click', () => {
+            initializeGame();
+        });
+
+        window.addEventListener('beforeunload', () => {
+            stopSensors();
+        });
+
+        document.addEventListener('dblclick', e => {
+            e.preventDefault();
+        });
     </script>
 </body>
 </html>
