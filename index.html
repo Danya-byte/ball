@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Tilt Ball Debug</title>
+    <title>Tilt Ball Game</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         :root {
@@ -115,7 +115,7 @@
 </head>
 <body>
     <div id="startScreen">
-        <h1>Tilt Ball Debug</h1>
+        <h1>Tilt Ball Game</h1>
         <button id="startBtn">Start Game</button>
         <div id="errorMsg" class="error-message"></div>
     </div>
@@ -160,6 +160,30 @@
             debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
         });
 
+        // Работа с разрешениями
+        function getSensorPermission() {
+            return localStorage.getItem('sensorPermission');
+        }
+
+        function setSensorPermission(status) {
+            localStorage.setItem('sensorPermission', status);
+        }
+
+        async function requestSensorPermission() {
+            try {
+                if (typeof DeviceOrientationEvent.requestPermission !== 'function') {
+                    return 'granted';
+                }
+
+                const permission = await DeviceOrientationEvent.requestPermission();
+                setSensorPermission(permission);
+                return permission;
+            } catch (e) {
+                log(`🔥 Permission error: ${e.message}`);
+                return 'denied';
+            }
+        }
+
         async function checkSensor(sensorType) {
             try {
                 const sensor = Telegram.WebApp[sensorType];
@@ -188,13 +212,6 @@
             }
 
             try {
-                // Валидация данных
-                if (!data || typeof data !== 'object') {
-                    log('⚠️ Invalid sensor data');
-                    return;
-                }
-
-                // Расчет смещения
                 let dx = 0, dy = 0;
                 const prevX = posX;
                 const prevY = posY;
@@ -210,22 +227,14 @@
 
                 log(`📐 Raw delta: X=${dx.toFixed(2)}, Y=${dy.toFixed(2)}`);
 
-                // Обновление позиции
                 posX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posX + dx));
                 posY = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posY + dy));
 
                 log(`📍 New position: X=${posX.toFixed(2)}%, Y=${posY.toFixed(2)}%`);
                 
-                // Визуальное обновление
                 ball.style.left = `${posX}%`;
                 ball.style.top = `${posY}%`;
-                
-                // Проверка изменений
-                if (posX === prevX && posY === prevY) {
-                    log('🔄 No position change');
-                }
 
-                // Тест рендеринга
                 const rect = ball.getBoundingClientRect();
                 log(`🖥️ Rendered at: ${rect.left.toFixed(1)}px, ${rect.top.toFixed(1)}px`);
 
@@ -240,12 +249,20 @@
                 startBtn.disabled = true;
                 errorMsg.style.display = 'none';
 
-                // Проверка платформы
                 if (!navigator.userAgent.match(/Mobile/)) {
                     throw new Error('📱 Mobile only');
                 }
 
-                // Проверка датчиков
+                // Проверка и запрос разрешения
+                let permission = getSensorPermission();
+                if (!permission) {
+                    permission = await requestSensorPermission();
+                }
+
+                if (permission !== 'granted') {
+                    throw new Error('🚫 Access denied');
+                }
+
                 currentSensor = await checkSensor('DeviceOrientation') ? 'DeviceOrientation' :
                                await checkSensor('Accelerometer') ? 'Accelerometer' : null;
 
@@ -253,15 +270,6 @@
                     throw new Error('🔌 No sensors found');
                 }
 
-                // Запрос разрешений (iOS)
-                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    const permission = await DeviceOrientationEvent.requestPermission();
-                    if (permission !== 'granted') {
-                        throw new Error('🚫 Access denied');
-                    }
-                }
-
-                // Инициализация датчика
                 const sensor = Telegram.WebApp[currentSensor];
                 sensor.start({ refresh_rate: SETTINGS.refreshRate }, success => {
                     if (!success) throw new Error('🔥 Sensor init failed');
@@ -270,13 +278,11 @@
                     isGameActive = true;
                     log('🚀 Game started!');
                     
-                    // Подписка на данные
                     sensor.on('changed', (data) => {
                         log(`📡 ${currentSensor} update received`);
                         handleSensorData(data);
                     });
 
-                    // Тестовый вызов
                     setTimeout(() => {
                         log('⚡ TEST: Forcing movement');
                         handleSensorData(
