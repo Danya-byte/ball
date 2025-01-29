@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <base href="/">
+    <title>Instant Tilt Ball</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #1a1a1a;
+        }
+        #ball {
+            width: 40px;
+            height: 40px;
+            background: #ff4444;
+            border-radius: 50%;
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            transition: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="ball"></div>
+
+    <script>
+        const ball = document.getElementById('ball');
+        let posX = 50; // Начальная позиция в %
+        let posY = 50;
+        const SPEED_FACTOR = 0.3; // Множитель скорости
+        let isTracking = false;
+
+        // Жесткие границы экрана
+        const clampPosition = (value) => Math.max(0, Math.min(100, value));
+
+        // Обработчик поворотов
+        const handleOrientation = (event) => {
+            if (!isTracking) return;
+
+            // Мгновенное обновление позиции
+            posX += event.gamma * SPEED_FACTOR;
+            posY += event.beta * SPEED_FACTOR;
+
+            // Фиксация границ
+            posX = clampPosition(posX);
+            posY = clampPosition(posY);
+
+            // Мгновенное обновление позиции без анимаций
+            ball.style.left = `${posX}%`;
+            ball.style.top = `${posY}%`;
+        };
+
+        // Инициализация
+        Telegram.WebApp.ready();
+        
+        // Запуск отслеживания
+        Telegram.WebApp.DeviceOrientation.start(
+            { refresh_rate: 20 }, // Максимальная частота
+            (success) => {
+                if (success) {
+                    isTracking = true;
+                    Telegram.WebApp.DeviceOrientation.on('changed', handleOrientation);
+                }
+            }
+        );
+    </script>
+</body>
+</html>
