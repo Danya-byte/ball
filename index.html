@@ -4,70 +4,202 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <base href="/">
-    <title>Instant Tilt Ball</title>
+    <title>Smart Tilt Ball</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
+        :root {
+            --bg-color: #1a1a1a;
+            --ball-color: #ff4444;
+            --text-color: #ffffff;
+        }
+
         body {
             margin: 0;
             overflow: hidden;
-            background: #1a1a1a;
+            background: var(--bg-color);
+            font-family: Arial, sans-serif;
+            color: var(--text-color);
         }
+
+        #startScreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0,0,0,0.95);
+            z-index: 1000;
+        }
+
         #ball {
             width: 40px;
             height: 40px;
-            background: #ff4444;
+            background: var(--ball-color);
             border-radius: 50%;
             position: absolute;
             left: 50%;
             top: 50%;
             transform: translate(-50%, -50%);
-            transition: none !important;
+            display: none;
+            box-shadow: 0 0 15px rgba(255,68,68,0.5);
+            transition: transform 0.1s;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            margin: 10px;
+            transition: all 0.2s;
+        }
+
+        .sensor-status {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            font-size: 12px;
+            color: #888;
         }
     </style>
 </head>
 <body>
+    <div id="startScreen">
+        <h1>Управляй шариком!</h1>
+        <button id="startBtn">Начать игру</button>
+        <div id="errorMsg" style="color: red; margin-top: 20px; display: none;"></div>
+    </div>
+
     <div id="ball"></div>
+    <div class="sensor-status" id="sensorStatus"></div>
 
     <script>
         const ball = document.getElementById('ball');
-        let posX = 50; // Начальная позиция в %
+        const startScreen = document.getElementById('startScreen');
+        const startBtn = document.getElementById('startBtn');
+        const errorMsg = document.getElementById('errorMsg');
+        const sensorStatus = document.getElementById('sensorStatus');
+
+        let currentSensor = null;
+        let isGameActive = false;
+        let posX = 50; // позиция в %
         let posY = 50;
-        const SPEED_FACTOR = 0.3; // Множитель скорости
-        let isTracking = false;
 
-        // Жесткие границы экрана
-        const clampPosition = (value) => Math.max(0, Math.min(100, value));
-
-        // Обработчик поворотов
-        const handleOrientation = (event) => {
-            if (!isTracking) return;
-
-            // Мгновенное обновление позиции
-            posX += event.gamma * SPEED_FACTOR;
-            posY += event.beta * SPEED_FACTOR;
-
-            // Фиксация границ
-            posX = clampPosition(posX);
-            posY = clampPosition(posY);
-
-            // Мгновенное обновление позиции без анимаций
-            ball.style.left = `${posX}%`;
-            ball.style.top = `${posY}%`;
+        // Настройки
+        const SETTINGS = {
+            sensitivity: 0.4,
+            maxSpeed: 5,
+            refreshRate: 30
         };
 
-        // Инициализация
+        // Инициализация Telegram WebApp
         Telegram.WebApp.ready();
-        
-        // Запуск отслеживания
-        Telegram.WebApp.DeviceOrientation.start(
-            { refresh_rate: 20 }, // Максимальная частота
-            (success) => {
-                if (success) {
-                    isTracking = true;
-                    Telegram.WebApp.DeviceOrientation.on('changed', handleOrientation);
+        Telegram.WebApp.expand();
+
+        // Проверка поддержки сенсоров
+        async function checkSensors() {
+            const sensors = {
+                orientation: Telegram.WebApp.DeviceOrientation,
+                accelerometer: Telegram.WebApp.Accelerometer,
+                gyroscope: Telegram.WebApp.Gyroscope
+            };
+
+            for (const [name, sensor] of Object.entries(sensors)) {
+                try {
+                    const supported = await new Promise(resolve => {
+                        sensor.start({ refresh_rate: 10 }, success => {
+                            sensor.stop();
+                            resolve(success);
+                        });
+                    });
+                    if (supported) return name;
+                } catch (e) {
+                    console.warn(`${name} not supported`);
                 }
             }
-        );
+            return null;
+        }
+
+        // Обработчик данных сенсора
+        function handleSensorData(data) {
+            if (!isGameActive) return;
+
+            // Вычисляем смещение
+            let dx = 0, dy = 0;
+            
+            if (currentSensor === 'orientation') {
+                dx = data.gamma * SETTINGS.sensitivity;
+                dy = data.beta * SETTINGS.sensitivity;
+            } 
+            else if (currentSensor === 'accelerometer') {
+                dx = data.x * SETTINGS.sensitivity * 0.1;
+                dy = data.y * SETTINGS.sensitivity * 0.1;
+            }
+            else if (currentSensor === 'gyroscope') {
+                dx = data.x * SETTINGS.sensitivity * 0.05;
+                dy = data.y * SETTINGS.sensitivity * 0.05;
+            }
+
+            // Обновляем позицию
+            posX = Math.max(2, Math.min(98, posX + dx));
+            posY = Math.max(2, Math.min(98, posY + dy));
+
+            ball.style.left = `${posX}%`;
+            ball.style.top = `${posY}%`;
+        }
+
+        // Запуск игры
+        async function startGame() {
+            try {
+                // Проверка поддержки
+                currentSensor = await checkSensors();
+                if (!currentSensor) {
+                    throw new Error('Датчики не поддерживаются');
+                }
+
+                // Запрос разрешений
+                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    const permission = await DeviceOrientationEvent.requestPermission();
+                    if (permission !== 'granted') throw new Error('Доступ запрещен');
+                }
+
+                // Настройка выбранного сенсора
+                const sensor = Telegram.WebApp[currentSensor.charAt(0).toUpperCase() + currentSensor.slice(1)];
+                sensor.start({ refresh_rate: SETTINGS.refreshRate }, success => {
+                    if (!success) throw new Error('Ошибка инициализации');
+                    
+                    sensor.on('changed', handleSensorData);
+                    sensorStatus.textContent = `Используется: ${currentSensor}`;
+                    
+                    startScreen.style.display = 'none';
+                    ball.style.display = 'block';
+                    isGameActive = true;
+                });
+
+            } catch (error) {
+                errorMsg.textContent = error.message;
+                errorMsg.style.display = 'block';
+                startBtn.disabled = true;
+            }
+        }
+
+        // События
+        startBtn.addEventListener('click', startGame);
+
+        // Автомасштабирование
+        window.addEventListener('resize', () => {
+            posX = Math.max(2, Math.min(98, posX));
+            posY = Math.max(2, Math.min(98, posY));
+            ball.style.left = `${posX}%`;
+            ball.style.top = `${posY}%`;
+        });
     </script>
 </body>
 </html>
