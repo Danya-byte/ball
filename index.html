@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <base href="/">
-    <title>Universal Tilt Ball</title>
+    <title>Tilt Ball Game</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         :root {
@@ -20,7 +20,6 @@
             font-family: Arial, sans-serif;
             color: var(--text-color);
             touch-action: pan-x pan-y;
-            -ms-touch-action: pan-x pan-y;
         }
 
         #startScreen {
@@ -35,6 +34,7 @@
             align-items: center;
             background: rgba(0,0,0,0.95);
             z-index: 1000;
+            transition: top 0.3s;
         }
 
         #ball {
@@ -65,12 +65,48 @@
         .error-message {
             color: #ff4444;
             margin-top: 20px;
-            text-align: center;
-            max-width: 80%;
-            display: none; /* Скрываем по умолчанию */
             padding: 10px;
             border: 1px solid #ff4444;
             border-radius: 8px;
+            display: none;
+            max-width: 80%;
+            text-align: center;
+        }
+
+        #debugPanel {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0,0,0,0.9);
+            color: #00ff00;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 30vh;
+            overflow-y: auto;
+            display: none;
+            z-index: 1001;
+        }
+
+        #toggleDebug {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            background: #333;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            padding: 5px 10px;
+            z-index: 1002;
+        }
+
+        .debug-visible #debugPanel {
+            display: block;
+        }
+
+        .debug-visible #startScreen {
+            top: -30vh;
         }
     </style>
 </head>
@@ -82,54 +118,65 @@
     </div>
 
     <div id="ball"></div>
+    <div id="debugPanel"></div>
+    <button id="toggleDebug">Debug</button>
 
     <script>
         const ball = document.getElementById('ball');
         const startScreen = document.getElementById('startScreen');
         const startBtn = document.getElementById('startBtn');
         const errorMsg = document.getElementById('errorMsg');
+        const debugPanel = document.getElementById('debugPanel');
+        const toggleDebug = document.getElementById('toggleDebug');
 
         const SETTINGS = {
             refreshRate: 50,
-            sensitivity: 0.3
+            sensitivity: 0.3,
+            debug: true
         };
 
         let currentSensor = null;
         let isGameActive = false;
         let posX = 50;
         let posY = 50;
-
-        // Блокировка масштабирования
-        document.addEventListener('dblclick', function(e) {
-            e.preventDefault();
-        }, { passive: false });
-
-        let lastTouchEnd = 0;
-        document.addEventListener('touchend', function(event) {
-            const now = Date.now();
-            if (now - lastTouchEnd <= 300) {
-                event.preventDefault();
-            }
-            lastTouchEnd = now;
-        }, { passive: false });
+        let debugLogs = [];
 
         // Инициализация Telegram WebApp
         Telegram.WebApp.ready();
         Telegram.WebApp.expand();
 
+        // Логирование в панель отладки
+        function addDebugLog(message) {
+            if (!SETTINGS.debug) return;
+            
+            debugLogs.push(`${new Date().toLocaleTimeString()}: ${message}`);
+            if (debugLogs.length > 10) debugLogs.shift();
+            
+            debugPanel.innerHTML = debugLogs.join('<br>');
+            debugPanel.scrollTop = debugPanel.scrollHeight;
+        }
+
+        // Переключение панели отладки
+        toggleDebug.addEventListener('click', () => {
+            document.body.classList.toggle('debug-visible');
+        });
+
+        // Проверка датчиков
         async function checkSensors() {
+            addDebugLog('Начало проверки датчиков');
+            
             const sensors = [
-                {
+                { 
                     name: 'DeviceOrientation',
                     obj: Telegram.WebApp.DeviceOrientation,
                     check: () => 'DeviceOrientationEvent' in window
                 },
-                {
+                { 
                     name: 'Accelerometer',
                     obj: Telegram.WebApp.Accelerometer,
                     check: () => 'Accelerometer' in window
                 },
-                {
+                { 
                     name: 'Gyroscope',
                     obj: Telegram.WebApp.Gyroscope,
                     check: () => 'Gyroscope' in window
@@ -138,30 +185,38 @@
 
             for (const sensor of sensors) {
                 try {
+                    addDebugLog(`Проверка: ${sensor.name}`);
+                    
                     if (!sensor.obj || !sensor.check()) {
-                        showError(`Датчик ${sensor.name} не поддерживается`);
+                        addDebugLog(`${sensor.name} недоступен`);
                         continue;
                     }
-                    
+
                     const supported = await new Promise(resolve => {
                         sensor.obj.start({ refresh_rate: SETTINGS.refreshRate }, success => {
                             sensor.obj.stop();
+                            addDebugLog(`${sensor.name}: ${success ? 'работает' : 'не отвечает'}`);
                             resolve(success);
                         });
                     });
 
-                    if (supported) return sensor.name;
-
+                    if (supported) {
+                        addDebugLog(`Выбран датчик: ${sensor.name}`);
+                        return sensor.name;
+                    }
                 } catch (e) {
-                    showError(`Ошибка проверки ${sensor.name}: ${e.message}`);
+                    addDebugLog(`Ошибка: ${e.message}`);
                 }
             }
             return null;
         }
 
+        // Обработчик данных датчика
         function handleSensorData(data) {
             if (!isGameActive) return;
 
+            addDebugLog(`Данные: ${JSON.stringify(data).slice(0, 50)}...`);
+            
             let dx = 0, dy = 0;
             
             if (currentSensor === 'DeviceOrientation') {
@@ -182,39 +237,53 @@
             ball.style.top = `${posY}%`;
         }
 
+        // Отображение ошибок
         function showError(message) {
             errorMsg.textContent = message;
             errorMsg.style.display = 'block';
+            addDebugLog(`ОШИБКА: ${message}`);
             startBtn.disabled = false;
-            console.error(message);
         }
 
+        // Запуск игры
         async function startGame() {
             try {
+                addDebugLog('--- Запуск игры ---');
                 errorMsg.style.display = 'none';
                 startBtn.disabled = true;
-                
-                if (!navigator.userAgent.match(/Mobile/)) {
-                    throw new Error('📱 Игра доступна только на мобильных устройствах');
+                isGameActive = false;
+
+                // Проверка устройства
+                if (!/Mobile/.test(navigator.userAgent)) {
+                    throw new Error('Только для мобильных устройств');
                 }
 
+                // Поиск рабочего датчика
                 currentSensor = await checkSensors();
                 if (!currentSensor) {
-                    throw new Error('❌ Устройство не имеет необходимых датчиков');
+                    throw new Error('Датчики не обнаружены');
                 }
 
+                // Запрос разрешений для iOS
                 if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    addDebugLog('Запрос разрешения...');
                     const permission = await DeviceOrientationEvent.requestPermission();
+                    addDebugLog(`Результат: ${permission}`);
+                    
                     if (permission !== 'granted') {
-                        throw new Error('🔒 Разрешите доступ к датчикам в настройках');
+                        throw new Error('Доступ к датчикам запрещен');
                     }
                 }
 
+                // Инициализация датчика
                 const sensor = Telegram.WebApp[currentSensor];
+                addDebugLog(`Запуск ${currentSensor}`);
+                
                 sensor.start({ refresh_rate: SETTINGS.refreshRate }, success => {
-                    if (!success) throw new Error('⚠️ Ошибка инициализации датчика');
+                    if (!success) throw new Error('Ошибка запуска датчика');
                     
                     sensor.on('changed', handleSensorData);
+                    addDebugLog('Датчик активен');
                     
                     startScreen.style.display = 'none';
                     ball.style.display = 'block';
@@ -226,7 +295,17 @@
             }
         }
 
+        // События
         startBtn.addEventListener('click', startGame);
+
+        // Блокировка масштабирования
+        document.addEventListener('dblclick', e => e.preventDefault(), { passive: false });
+        let lastTouchEnd = 0;
+        document.addEventListener('touchend', e => {
+            const now = Date.now();
+            if (now - lastTouchEnd <= 300) e.preventDefault();
+            lastTouchEnd = now;
+        }, { passive: false });
     </script>
 </body>
 </html>
