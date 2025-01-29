@@ -131,33 +131,22 @@
         const debugToggle = document.getElementById('debugToggle');
 
         const SETTINGS = {
-            refreshRate: 100,
-            sensitivity: 1.5,
+            refreshRate: 60,
+            sensitivity: 2.0,
             maxPosition: 98,
             minPosition: 2,
             debug: true
         };
 
-        let currentSensor = null;
         let isGameActive = false;
         let posX = 50;
         let posY = 50;
         let logs = [];
         let sensorHandler = null;
 
-        // Инициализация Telegram Web App
-        function initTelegramWebApp() {
-            try {
-                Telegram.WebApp.ready();
-                Telegram.WebApp.expand();
-                log('Telegram WebApp initialized');
-                log(`Platform: ${Telegram.WebApp.platform}`);
-                log(`WebApp version: ${Telegram.WebApp.version}`);
-            } catch (e) {
-                showError('Failed to initialize Telegram WebApp');
-                log(`Initialization error: ${e.message}`);
-            }
-        }
+        // Инициализация Telegram WebApp
+        Telegram.WebApp.ready();
+        Telegram.WebApp.expand();
 
         function log(message) {
             if (!SETTINGS.debug) return;
@@ -173,134 +162,89 @@
             log(`ERROR: ${message}`);
         }
 
-        async function requestSensorPermission() {
+        async function requestPermission() {
             try {
-                log('Requesting sensor permission...');
-                
-                if (typeof DeviceOrientationEvent === 'undefined' || 
-                    typeof DeviceOrientationEvent.requestPermission !== 'function') {
-                    log('Permission API not available');
-                    return 'granted';
+                if (typeof DeviceOrientationEvent !== 'undefined' && 
+                    typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    const result = await DeviceOrientationEvent.requestPermission();
+                    log(`Permission status: ${result}`);
+                    return result === 'granted';
                 }
-
-                const result = await DeviceOrientationEvent.requestPermission();
-                log(`Permission result: ${result}`);
-                return result;
+                return true;
             } catch (e) {
                 log(`Permission error: ${e.message}`);
-                return 'denied';
+                return false;
             }
         }
 
-        function handleSensorData(data) {
-            if (!isGameActive) {
-                log('Ignoring sensor data - game not active');
-                return;
-            }
+        function handleOrientation(event) {
+            if (!isGameActive) return;
 
-            let dx = 0, dy = 0;
-            
-            if (currentSensor === 'DeviceOrientation') {
-                log(`Orientation data: beta=${data.beta?.toFixed(2)} gamma=${data.gamma?.toFixed(2)}`);
-                dx = (data.gamma || 0) * SETTINGS.sensitivity * 0.5;
-                dy = (data.beta || 0) * SETTINGS.sensitivity * 0.5 * -1;
-            } 
-            else if (currentSensor === 'Accelerometer') {
-                log(`Accelerometer data: x=${data.x?.toFixed(2)} y=${data.y?.toFixed(2)}`);
-                dx = (data.x || 0) * SETTINGS.sensitivity * 0.2;
-                dy = (data.y || 0) * SETTINGS.sensitivity * 0.2;
-            }
+            const beta = event.beta || 0;  // Наклон вперед/назад (от -180 до 180)
+            const gamma = event.gamma || 0; // Наклон влево/вправо (от -90 до 90)
 
-            posX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posX + dx));
-            posY = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posY + dy));
+            // Корректировка значений для iOS
+            const adjustedBeta = Math.max(-90, Math.min(90, beta));
+            const adjustedGamma = Math.max(-90, Math.min(90, gamma));
+
+            posX = 50 + (adjustedGamma * SETTINGS.sensitivity);
+            posY = 50 + (adjustedBeta * SETTINGS.sensitivity * -1);
+
+            posX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posX));
+            posY = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posY));
 
             ball.style.left = `${posX}%`;
             ball.style.top = `${posY}%`;
         }
 
-        function startSensor(sensorType) {
-            return new Promise((resolve, reject) => {
-                try {
-                    log(`Starting ${sensorType} sensor...`);
-                    
-                    const sensor = Telegram.WebApp[sensorType];
-                    if (!sensor) {
-                        log(`${sensorType} not available`);
-                        return reject(`${sensorType} not supported`);
-                    }
+        function handleAcceleration(event) {
+            if (!isGameActive) return;
 
-                    if (typeof sensor.start !== 'function' || 
-                        typeof sensor.on !== 'function') {
-                        log(`${sensorType} methods missing`);
-                        return reject(`${sensorType} API incomplete`);
-                    }
+            const x = event.x || 0;
+            const y = event.y || 0;
 
-                    sensor.start({ refresh_rate: SETTINGS.refreshRate }, (success) => {
-                        if (!success) {
-                            log(`${sensorType} start failed`);
-                            return reject(`Failed to start ${sensorType}`);
-                        }
+            posX += x * SETTINGS.sensitivity * 0.3;
+            posY += y * SETTINGS.sensitivity * 0.3;
 
-                        log(`${sensorType} started successfully`);
-                        
-                        const eventName = sensorType === 'DeviceOrientation' 
-                            ? 'deviceOrientationChanged' 
-                            : 'accelerometerChanged';
+            posX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posX));
+            posY = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posY));
 
-                        sensorHandler = function() {
-                            handleSensorData({
-                                beta: this.beta,
-                                gamma: this.gamma,
-                                x: this.x,
-                                y: this.y
-                            });
-                        };
-
-                        sensor.on(eventName, sensorHandler);
-                        resolve();
-                    });
-
-                } catch (e) {
-                    log(`${sensorType} error: ${e.message}`);
-                    reject(e);
-                }
-            });
+            ball.style.left = `${posX}%`;
+            ball.style.top = `${posY}%`;
         }
 
-        async function initializeGame() {
+        async function startGame() {
             try {
-                log('Initializing game...');
                 startBtn.disabled = true;
+                errorMsg.style.display = 'none';
+                log('Starting game...');
 
-                // Проверка платформы
-                if (!Telegram.WebApp.isVersionAtLeast('6.0')) {
-                    throw new Error('Update Telegram to latest version');
+                // Запрос разрешения для iOS
+                const hasPermission = await requestPermission();
+                if (!hasPermission) {
+                    throw new Error('Permission denied');
                 }
 
-                // Запрос разрешений
-                const permission = await requestSensorPermission();
-                if (permission !== 'granted') {
-                    throw new Error('Sensor access denied');
+                // Выбор API в зависимости от поддержки
+                if ('DeviceOrientationEvent' in window) {
+                    log('Using DeviceOrientation API');
+                    window.addEventListener('deviceorientation', handleOrientation);
+                    sensorHandler = () => {
+                        window.removeEventListener('deviceorientation', handleOrientation);
+                    };
+                } else if ('LinearAccelerationSensor' in window) {
+                    log('Using LinearAccelerationSensor API');
+                    const sensor = new LinearAccelerationSensor({frequency: SETTINGS.refreshRate});
+                    sensor.addEventListener('reading', handleAcceleration);
+                    sensor.start();
+                    sensorHandler = () => {
+                        sensor.stop();
+                        sensor.removeEventListener('reading', handleAcceleration);
+                    };
+                } else {
+                    throw new Error('Sensors not supported');
                 }
 
-                // Попытка запуска сенсоров
-                const sensors = ['DeviceOrientation', 'Accelerometer'];
-                for (const sensor of sensors) {
-                    try {
-                        await startSensor(sensor);
-                        currentSensor = sensor;
-                        log(`Using ${sensor} sensor`);
-                        break;
-                    } catch (e) {
-                        log(`Failed to start ${sensor}: ${e.message}`);
-                    }
-                }
-
-                if (!currentSensor) {
-                    throw new Error('No sensors available');
-                }
-
-                // Запуск игры
                 document.body.classList.add('game-started');
                 isGameActive = true;
                 log('Game started successfully');
@@ -308,55 +252,38 @@
             } catch (e) {
                 showError(e.message);
                 startBtn.disabled = false;
-                log(`Initialization failed: ${e.message}`);
+                log(`Game start failed: ${e.message}`);
             }
         }
 
-        function stopSensors() {
-            if (!currentSensor) return;
-            
-            try {
-                log(`Stopping ${currentSensor}...`);
-                const sensor = Telegram.WebApp[currentSensor];
-                
-                if (sensor && typeof sensor.stop === 'function') {
-                    sensor.stop(() => log(`${currentSensor} stopped`));
-                }
-                
-                if (sensor && typeof sensor.off === 'function') {
-                    const eventName = currentSensor === 'DeviceOrientation' 
-                        ? 'deviceOrientationChanged' 
-                        : 'accelerometerChanged';
-                    sensor.off(eventName, sensorHandler);
-                }
-                
-                currentSensor = null;
-                isGameActive = false;
-                
-            } catch (e) {
-                log(`Error stopping sensors: ${e.message}`);
+        function stopGame() {
+            if (sensorHandler) {
+                sensorHandler();
+                sensorHandler = null;
             }
+            isGameActive = false;
+            document.body.classList.remove('game-started');
+            log('Game stopped');
         }
-
-        // Инициализация при загрузке
-        initTelegramWebApp();
 
         // Обработчики событий
         debugToggle.addEventListener('click', () => {
             debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
         });
 
-        startBtn.addEventListener('click', () => {
-            initializeGame();
-        });
+        startBtn.addEventListener('click', startGame);
+        window.addEventListener('beforeunload', stopGame);
+        document.addEventListener('dblclick', e => e.preventDefault());
 
-        window.addEventListener('beforeunload', () => {
-            stopSensors();
-        });
-
-        document.addEventListener('dblclick', e => {
-            e.preventDefault();
-        });
+        // Автоматическое обновление позиции
+        function gameLoop() {
+            if (isGameActive) {
+                ball.style.left = `${posX}%`;
+                ball.style.top = `${posY}%`;
+            }
+            requestAnimationFrame(gameLoop);
+        }
+        gameLoop();
     </script>
 </body>
 </html>
