@@ -21,6 +21,25 @@
             touch-action: pan-x pan-y;
         }
 
+        .device-error {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 20px;
+            z-index: 3000;
+            background: linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0.7)),
+                        url('https://i.postimg.cc/Rh1cdYsR/724-EDD19-EB0-C-4368-9-C2-F-4938769-DF5-FD.png');
+            background-size: cover;
+            background-position: center;
+        }
+
         #startScreen {
             position: fixed;
             top: 0;
@@ -33,6 +52,7 @@
             align-items: center;
             background: rgba(0,0,0,0.95);
             z-index: 1000;
+            transition: opacity 0.3s;
         }
 
         #ball {
@@ -45,7 +65,14 @@
             top: 50%;
             transform: translate(-50%, -50%);
             opacity: 0;
-            transition: opacity 0.5s ease;
+            box-shadow: 0 0 15px rgba(255,68,68,0.5);
+            transition: all 0.5s ease;
+            z-index: 500;
+        }
+
+        .game-started #startScreen {
+            opacity: 0;
+            pointer-events: none;
         }
 
         .game-started #ball {
@@ -61,29 +88,120 @@
             border-radius: 20px;
             cursor: pointer;
             margin: 10px;
+            transition: transform 0.2s;
+        }
+
+        .error-message {
+            color: #ff4444;
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ff4444;
+            border-radius: 8px;
+            max-width: 80%;
+            text-align: center;
+            display: none;
+        }
+
+        #debugPanel {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0,0,0,0.9);
+            color: #00ff00;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 50vh;
+            overflow-y: auto;
+            display: none;
+            z-index: 2000;
+        }
+
+        #debugToggle {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            background: #333;
+            color: white;
+            border: none;
+            padding: 8px;
+            border-radius: 5px;
+            cursor: pointer;
+            z-index: 2001;
         }
     </style>
 </head>
 <body>
+    <div class="device-error" id="deviceError">
+        <h2>🚫 Mobile Only!</h2>
+        <p>This game requires a mobile device with gyroscope</p>
+        <p>Please open in smartphone or tablet</p>
+    </div>
+
     <div id="startScreen">
         <h1>Tilt Ball Game</h1>
         <button id="startBtn">Start Game</button>
+        <div id="errorMsg" class="error-message"></div>
     </div>
     <div id="ball"></div>
+    <div id="debugPanel"></div>
+    <button id="debugToggle">Debug</button>
 
     <script>
         // Инициализация Telegram WebApp
         Telegram.WebApp.ready();
         Telegram.WebApp.expand();
-        
-        // Базовые элементы управления
+
+        // Проверка устройства
+        const isMobile = () => /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+        // Блокировка ПК
+        if (!isMobile()) {
+            document.getElementById('deviceError').style.display = 'flex';
+            document.getElementById('startScreen').style.display = 'none';
+            throw new Error('PC access blocked');
+        }
+
+        // Полноэкранный режим
+        const initFullscreen = () => {
+            try {
+                if (!Telegram.WebApp.isFullscreen) {
+                    Telegram.WebApp.requestFullscreen();
+                    log('Fullscreen requested');
+                }
+            } catch (e) {
+                log(`Fullscreen error: ${e.message}`);
+            }
+        };
+
+        // Обработчики событий
+        Telegram.WebApp.onEvent('fullscreenChanged', () => {
+            log(`Fullscreen state: ${Telegram.WebApp.isFullscreen}`);
+        });
+
+        Telegram.WebApp.onEvent('fullscreenFailed', (error) => {
+            showError(`Fullscreen failed: ${error.error}`);
+        });
+
+        // Игровые настройки
         const ball = document.getElementById('ball');
         const startBtn = document.getElementById('startBtn');
-        
-        // Настройки игры
+        const errorMsg = document.getElementById('errorMsg');
+        const debugPanel = document.getElementById('debugPanel');
+        const debugToggle = document.getElementById('debugToggle');
+
         const SETTINGS = {
             sensitivity: 1.5,
-            smoothFactor: 0.12
+            maxPosition: 98,
+            minPosition: 2,
+            smoothFactor: 0.12,
+            debug: true,
+            vibration: {
+                duration: 30,
+                cooldown: 500,
+                threshold: 3
+            }
         };
 
         let isGameActive = false;
@@ -91,69 +209,130 @@
         let posY = 50;
         let targetX = 50;
         let targetY = 50;
+        let logs = [];
+        let sensorHandler = null;
+        let lastVibration = 0;
 
-        // Инициализация полноэкранного режима
-        function initFullscreen() {
+        // Логирование
+        const log = (message) => {
+            if (!SETTINGS.debug) return;
+            const timestamp = performance.now().toFixed(1);
+            logs.push(`${timestamp}ms: ${message}`);
+            debugPanel.innerHTML = logs.slice(-20).join('<br>');
+            debugPanel.scrollTop = debugPanel.scrollHeight;
+        };
+
+        // Обработка ошибок
+        const showError = (message) => {
+            errorMsg.textContent = message;
+            errorMsg.style.display = 'block';
+            log(`ERROR: ${message}`);
+        };
+
+        // Работа с сенсорами
+        const initSensors = async () => {
             try {
-                if (!Telegram.WebApp.isFullscreen) {
-                    Telegram.WebApp.requestFullscreen();
-                    console.log('Fullscreen activated');
+                if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
+                    const status = await DeviceOrientationEvent.requestPermission();
+                    if (status !== 'granted') throw new Error('Permission denied');
                 }
+                
+                window.addEventListener('deviceorientation', handleOrientation);
+                sensorHandler = () => window.removeEventListener('deviceorientation', handleOrientation);
+                
+                return true;
             } catch (e) {
-                console.error('Fullscreen error:', e);
+                showError(e.message);
+                return false;
             }
-        }
+        };
 
-        // Обработка гироскопа
-        function handleOrientation(event) {
+        // Обработка данных гироскопа
+        const handleOrientation = ({beta, gamma}) => {
             if (!isGameActive) return;
 
-            const beta = Math.max(-90, Math.min(90, event.beta || 0));
-            const gamma = Math.max(-90, Math.min(90, event.gamma || 0));
+            beta = Math.max(-90, Math.min(90, beta || 0));
+            gamma = Math.max(-90, Math.min(90, gamma || 0));
 
             targetX = 50 + (gamma * SETTINGS.sensitivity);
             targetY = 50 + (beta * SETTINGS.sensitivity * 0.8);
-        }
+
+            targetX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, targetX));
+            targetY = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, targetY));
+
+            log(`Orientation: X${targetX.toFixed(1)}% Y${targetY.toFixed(1)}%`);
+        };
+
+        // Вибрация при границах
+        const checkBoundaries = () => {
+            const now = Date.now();
+            const atEdge = [
+                posX <= SETTINGS.minPosition + SETTINGS.vibration.threshold,
+                posX >= SETTINGS.maxPosition - SETTINGS.vibration.threshold,
+                posY <= SETTINGS.minPosition + SETTINGS.vibration.threshold,
+                posY >= SETTINGS.maxPosition - SETTINGS.vibration.threshold
+            ].some(condition => condition);
+
+            if (atEdge && now - lastVibration > SETTINGS.vibration.cooldown) {
+                navigator.vibrate?.(SETTINGS.vibration.duration);
+                lastVibration = now;
+                log('Boundary vibration');
+            }
+        };
 
         // Игровой цикл
-        function gameLoop() {
+        const gameLoop = () => {
             if (isGameActive) {
                 posX += (targetX - posX) * SETTINGS.smoothFactor;
                 posY += (targetY - posY) * SETTINGS.smoothFactor;
 
                 ball.style.left = `${posX}%`;
                 ball.style.top = `${posY}%`;
+
+                checkBoundaries();
             }
             requestAnimationFrame(gameLoop);
-        }
+        };
 
         // Запуск игры
-        async function startGame() {
+        const startGame = async () => {
             try {
                 startBtn.disabled = true;
-                
-                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    const permission = await DeviceOrientationEvent.requestPermission();
-                    if (permission !== 'granted') {
-                        alert('Gyroscope access required!');
-                        return;
-                    }
-                }
+                errorMsg.style.display = 'none';
 
-                window.addEventListener('deviceorientation', handleOrientation);
+                if (!(await initSensors())) return;
+                
                 document.body.classList.add('game-started');
                 isGameActive = true;
                 initFullscreen();
+                log('Game started');
 
             } catch (e) {
-                console.error('Game start failed:', e);
+                showError(e.message);
                 startBtn.disabled = false;
+                log(`Start failed: ${e.message}`);
             }
-        }
+        };
+
+        // Остановка игры
+        const stopGame = () => {
+            sensorHandler?.();
+            isGameActive = false;
+            document.body.classList.remove('game-started');
+            log('Game stopped');
+        };
 
         // Инициализация
+        debugToggle.addEventListener('click', () => {
+            debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
+        });
+
         startBtn.addEventListener('click', startGame);
+        window.addEventListener('beforeunload', stopGame);
+        document.addEventListener('dblclick', e => e.preventDefault());
+
         gameLoop();
+        initFullscreen();
     </script>
 </body>
 </html>
