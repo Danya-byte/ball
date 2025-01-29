@@ -19,6 +19,7 @@
             font-family: Arial, sans-serif;
             color: var(--text-color);
             touch-action: pan-x pan-y;
+            transition: transform 0.1s;
         }
 
         #startScreen {
@@ -132,21 +133,27 @@
 
         const SETTINGS = {
             refreshRate: 60,
-            sensitivity: 2.0,
+            sensitivity: 1.2,
             maxPosition: 98,
             minPosition: 2,
-            debug: true
+            smoothFactor: 0.15,
+            debug: true,
+            vibrationIntensity: 4
         };
 
         let isGameActive = false;
         let posX = 50;
         let posY = 50;
+        let targetX = 50;
+        let targetY = 50;
         let logs = [];
         let sensorHandler = null;
+        let isVibrating = false;
 
         // Инициализация Telegram WebApp
         Telegram.WebApp.ready();
         Telegram.WebApp.expand();
+        log('Telegram WebApp initialized');
 
         function log(message) {
             if (!SETTINGS.debug) return;
@@ -180,37 +187,52 @@
         function handleOrientation(event) {
             if (!isGameActive) return;
 
-            const beta = event.beta || 0;  // Наклон вперед/назад (от -180 до 180)
-            const gamma = event.gamma || 0; // Наклон влево/вправо (от -90 до 90)
+            const beta = event.beta || 0;
+            const gamma = event.gamma || 0;
 
             // Корректировка значений для iOS
             const adjustedBeta = Math.max(-90, Math.min(90, beta));
             const adjustedGamma = Math.max(-90, Math.min(90, gamma));
 
-            posX = 50 + (adjustedGamma * SETTINGS.sensitivity);
-            posY = 50 + (adjustedBeta * SETTINGS.sensitivity * -1);
+            // Расчет целевой позиции без инверсии
+            targetX = 50 + (adjustedGamma * SETTINGS.sensitivity);
+            targetY = 50 + (adjustedBeta * SETTINGS.sensitivity);
 
-            posX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posX));
-            posY = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posY));
+            // Ограничение позиции
+            targetX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, targetX));
+            targetY = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, targetY));
 
-            ball.style.left = `${posX}%`;
-            ball.style.top = `${posY}%`;
+            // Активация вибрации
+            if (SETTINGS.vibrationIntensity > 0 && !isVibrating) {
+                const vibrationAmount = Math.min(50, SETTINGS.vibrationIntensity * 8);
+                if (navigator.vibrate) navigator.vibrate(vibrationAmount);
+                isVibrating = true;
+                setTimeout(() => isVibrating = false, 100);
+            }
         }
 
-        function handleAcceleration(event) {
-            if (!isGameActive) return;
+        function gameLoop() {
+            if (isGameActive) {
+                // Плавная интерполяция позиции
+                posX += (targetX - posX) * SETTINGS.smoothFactor;
+                posY += (targetY - posY) * SETTINGS.smoothFactor;
 
-            const x = event.x || 0;
-            const y = event.y || 0;
+                // Применение позиции
+                ball.style.left = `${posX}%`;
+                ball.style.top = `${posY}%`;
 
-            posX += x * SETTINGS.sensitivity * 0.3;
-            posY += y * SETTINGS.sensitivity * 0.3;
-
-            posX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posX));
-            posY = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posY));
-
-            ball.style.left = `${posX}%`;
-            ball.style.top = `${posY}%`;
+                // Эффект дрожания экрана
+                if (SETTINGS.vibrationIntensity > 0) {
+                    const intensity = Math.hypot(targetX - posX, targetY - posY) * 0.3;
+                    document.body.style.transform = `
+                        translate(
+                            ${(Math.random() - 0.5) * intensity}px,
+                            ${(Math.random() - 0.5) * intensity}px
+                        )
+                    `;
+                }
+            }
+            requestAnimationFrame(gameLoop);
         }
 
         async function startGame() {
@@ -219,27 +241,14 @@
                 errorMsg.style.display = 'none';
                 log('Starting game...');
 
-                // Запрос разрешения для iOS
                 const hasPermission = await requestPermission();
-                if (!hasPermission) {
-                    throw new Error('Permission denied');
-                }
+                if (!hasPermission) throw new Error('Permission denied');
 
-                // Выбор API в зависимости от поддержки
                 if ('DeviceOrientationEvent' in window) {
                     log('Using DeviceOrientation API');
                     window.addEventListener('deviceorientation', handleOrientation);
                     sensorHandler = () => {
                         window.removeEventListener('deviceorientation', handleOrientation);
-                    };
-                } else if ('LinearAccelerationSensor' in window) {
-                    log('Using LinearAccelerationSensor API');
-                    const sensor = new LinearAccelerationSensor({frequency: SETTINGS.refreshRate});
-                    sensor.addEventListener('reading', handleAcceleration);
-                    sensor.start();
-                    sensorHandler = () => {
-                        sensor.stop();
-                        sensor.removeEventListener('reading', handleAcceleration);
                     };
                 } else {
                     throw new Error('Sensors not supported');
@@ -263,10 +272,11 @@
             }
             isGameActive = false;
             document.body.classList.remove('game-started');
+            document.body.style.transform = 'none';
             log('Game stopped');
         }
 
-        // Обработчики событий
+        // Инициализация
         debugToggle.addEventListener('click', () => {
             debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
         });
@@ -274,15 +284,6 @@
         startBtn.addEventListener('click', startGame);
         window.addEventListener('beforeunload', stopGame);
         document.addEventListener('dblclick', e => e.preventDefault());
-
-        // Автоматическое обновление позиции
-        function gameLoop() {
-            if (isGameActive) {
-                ball.style.left = `${posX}%`;
-                ball.style.top = `${posY}%`;
-            }
-            requestAnimationFrame(gameLoop);
-        }
         gameLoop();
     </script>
 </body>
