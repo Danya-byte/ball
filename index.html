@@ -173,15 +173,6 @@
             }
         }
 
-        function checkSensorAvailable(sensorType) {
-            try {
-                return !!Telegram.WebApp[sensorType];
-            } catch (e) {
-                log(`🔥 ${sensorType} check error: ${e.message}`);
-                return false;
-            }
-        }
-
         function handleSensorData(data) {
             if (!isGameActive) return;
 
@@ -208,29 +199,40 @@
                     throw new Error('🚫 Sensor access denied');
                 }
 
-                if (checkSensorAvailable('DeviceOrientation')) {
+                // Проверяем доступность сенсоров
+                const isOrientationAvailable = Telegram.WebApp.DeviceOrientation && 
+                    typeof Telegram.WebApp.DeviceOrientation.start === 'function';
+                
+                const isAccelerometerAvailable = Telegram.WebApp.Accelerometer && 
+                    typeof Telegram.WebApp.Accelerometer.start === 'function';
+
+                // Выбираем приоритетный сенсор
+                if (isOrientationAvailable) {
                     currentSensor = 'DeviceOrientation';
-                    sensorHandler = function() {
+                    sensorHandler = (event) => {
                         handleSensorData({
-                            beta: this.beta,
-                            gamma: this.gamma
+                            beta: event.beta,
+                            gamma: event.gamma
                         });
                     };
-                    Telegram.WebApp.DeviceOrientation.on('deviceOrientationChanged', sensorHandler);
-                } else if (checkSensorAvailable('Accelerometer')) {
+                    Telegram.WebApp.DeviceOrientation.on('changed', sensorHandler);
+                } else if (isAccelerometerAvailable) {
                     currentSensor = 'Accelerometer';
-                    sensorHandler = function() {
+                    sensorHandler = (event) => {
                         handleSensorData({
-                            x: this.x,
-                            y: this.y
+                            x: event.x,
+                            y: event.y
                         });
                     };
-                    Telegram.WebApp.Accelerometer.on('accelerometerChanged', sensorHandler);
+                    Telegram.WebApp.Accelerometer.on('changed', sensorHandler);
                 } else {
                     throw new Error('🔌 No sensors available');
                 }
 
-                Telegram.WebApp[currentSensor].start({ refresh_rate: SETTINGS.refreshRate }, success => {
+                // Запускаем выбранный сенсор
+                Telegram.WebApp[currentSensor].start({ 
+                    refresh_rate: SETTINGS.refreshRate 
+                }, (success) => {
                     if (!success) throw new Error('🔥 Sensor start failed');
                     
                     document.body.classList.add('game-started');
@@ -248,12 +250,7 @@
 
         function cleanup() {
             if (currentSensor && sensorHandler) {
-                Telegram.WebApp[currentSensor].off(
-                    currentSensor === 'DeviceOrientation' 
-                        ? 'deviceOrientationChanged' 
-                        : 'accelerometerChanged',
-                    sensorHandler
-                );
+                Telegram.WebApp[currentSensor].off('changed', sensorHandler);
                 Telegram.WebApp[currentSensor].stop();
             }
         }
