@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Tilt Ball Debug</title>
+    <title>Tilt Ball Game</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         :root {
@@ -33,6 +33,7 @@
             align-items: center;
             background: rgba(0,0,0,0.95);
             z-index: 1000;
+            transition: opacity 0.3s;
         }
 
         #ball {
@@ -44,9 +45,19 @@
             left: 50%;
             top: 50%;
             transform: translate(-50%, -50%);
-            display: none;
+            opacity: 0;
             box-shadow: 0 0 15px rgba(255,68,68,0.5);
-            transition: left 0.5s linear, top 0.5s linear;
+            transition: all 0.3s ease;
+            z-index: 500;
+        }
+
+        .game-started #startScreen {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .game-started #ball {
+            opacity: 1;
         }
 
         button {
@@ -58,6 +69,11 @@
             border-radius: 20px;
             cursor: pointer;
             margin: 10px;
+            transition: transform 0.2s;
+        }
+
+        button:active {
+            transform: scale(0.95);
         }
 
         .error-message {
@@ -66,8 +82,9 @@
             padding: 10px;
             border: 1px solid #ff4444;
             border-radius: 8px;
-            display: none;
             max-width: 80%;
+            text-align: center;
+            display: none;
         }
 
         #debugPanel {
@@ -82,6 +99,12 @@
             font-size: 12px;
             max-height: 50vh;
             overflow-y: auto;
+            display: none;
+            z-index: 2000;
+        }
+
+        .debug-visible #debugPanel {
+            display: block;
         }
 
         #debugToggle {
@@ -94,21 +117,23 @@
             padding: 8px;
             border-radius: 5px;
             cursor: pointer;
+            z-index: 2001;
         }
     </style>
 </head>
 <body>
     <div id="startScreen">
-        <h1>Tilt Ball Debug</h1>
+        <h1>Tilt Ball Game</h1>
         <button id="startBtn">Start Game</button>
         <div id="errorMsg" class="error-message"></div>
     </div>
     <div id="ball"></div>
     <div id="debugPanel"></div>
-    <button id="debugToggle">Toggle Debug</button>
+    <button id="debugToggle">Debug</button>
 
     <script>
         const ball = document.getElementById('ball');
+        const startScreen = document.getElementById('startScreen');
         const startBtn = document.getElementById('startBtn');
         const errorMsg = document.getElementById('errorMsg');
         const debugPanel = document.getElementById('debugPanel');
@@ -116,7 +141,7 @@
 
         const SETTINGS = {
             refreshRate: 50,
-            sensitivity: 1.0,
+            sensitivity: 0.7,
             maxPosition: 95,
             minPosition: 5,
             debug: true
@@ -128,103 +153,79 @@
         let posY = 50;
         let logs = [];
 
-        // Логирование
+        // Инициализация
+        Telegram.WebApp.ready();
+        Telegram.WebApp.expand();
+
         function log(message) {
             if (!SETTINGS.debug) return;
-            const timestamp = new Date().toLocaleTimeString();
-            logs.push(`${timestamp}: ${message}`);
-            if (logs.length > 20) logs.shift();
-            debugPanel.innerHTML = logs.join('<br>');
+            logs.push(`${performance.now().toFixed(2)}ms: ${message}`);
+            debugPanel.innerHTML = logs.slice(-15).join('<br>');
             debugPanel.scrollTop = debugPanel.scrollHeight;
         }
 
-        // Переключение debug-панели
         debugToggle.addEventListener('click', () => {
             debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
         });
 
-        // Проверка датчиков
         async function checkSensor(sensorType) {
             try {
                 const sensor = Telegram.WebApp[sensorType];
                 if (!sensor) {
-                    log(`Sensor ${sensorType} not available`);
+                    log(`⚠️ ${sensorType} not available`);
                     return false;
                 }
 
                 return await new Promise(resolve => {
                     sensor.start({ refresh_rate: SETTINGS.refreshRate }, success => {
                         sensor.stop();
-                        log(`${sensorType} test: ${success ? 'OK' : 'FAIL'}`);
+                        log(`${success ? '✅' : '❌'} ${sensorType} test`);
                         resolve(success);
                     });
                 });
             } catch (e) {
-                log(`Sensor check error: ${e.message}`);
+                log(`🔥 ${sensorType} error: ${e.message}`);
                 return false;
             }
         }
 
-        // Обработчик данных
         function handleSensorData(data) {
-            if (!isGameActive) {
-                log('Game not active!');
-                return;
-            }
+            if (!isGameActive) return;
 
             try {
-                log(`RAW DATA: ${JSON.stringify(data)}`);
-
                 let dx = 0, dy = 0;
+                
                 if (currentSensor === 'DeviceOrientation') {
-                    if (typeof data.beta !== 'number' || typeof data.gamma !== 'number') {
-                        log('Invalid orientation data');
-                        return;
-                    }
-                    dx = data.gamma * SETTINGS.sensitivity * 0.3;
-                    dy = data.beta * SETTINGS.sensitivity * 0.3 * -1;
+                    dx = (data.gamma || 0) * SETTINGS.sensitivity * 0.3;
+                    dy = (data.beta || 0) * SETTINGS.sensitivity * 0.3 * -1;
                 } 
                 else if (currentSensor === 'Accelerometer') {
-                    if (typeof data.x !== 'number' || typeof data.y !== 'number') {
-                        log('Invalid accelerometer data');
-                        return;
-                    }
-                    dx = data.x * SETTINGS.sensitivity * 0.1;
-                    dy = data.y * SETTINGS.sensitivity * 0.1;
+                    dx = (data.x || 0) * SETTINGS.sensitivity * 0.15;
+                    dy = (data.y || 0) * SETTINGS.sensitivity * 0.15;
                 }
 
-                log(`CALCULATED: dx=${dx.toFixed(2)}, dy=${dy.toFixed(2)}`);
-
-                const newX = posX + dx;
-                const newY = posY + dy;
-                log(`BEFORE CLAMP: X=${newX.toFixed(2)}%, Y=${newY.toFixed(2)}%`);
-
-                posX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, newX));
-                posY = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, newY));
-
-                log(`AFTER CLAMP: X=${posX.toFixed(2)}%, Y=${posY.toFixed(2)}%`);
+                posX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posX + dx));
+                posY = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, posY + dy));
 
                 ball.style.left = `${posX}%`;
                 ball.style.top = `${posY}%`;
                 
-                const computedStyle = window.getComputedStyle(ball);
-                log(`RENDERED: left=${computedStyle.left}, top=${computedStyle.top}`);
+                log(`🎯 Position: ${posX.toFixed(1)}% / ${posY.toFixed(1)}%`);
 
             } catch (e) {
-                log(`Processing error: ${e.message}`);
+                log(`💥 Processing error: ${e.message}`);
             }
         }
 
-        // Запуск игры
         async function startGame() {
             try {
                 logs = [];
-                errorMsg.style.display = 'none';
                 startBtn.disabled = true;
+                errorMsg.style.display = 'none';
 
-                // Проверка устройства
+                // Проверка платформы
                 if (!navigator.userAgent.match(/Mobile/)) {
-                    throw new Error('Только для мобильных устройств');
+                    throw new Error('📱 Mobile only');
                 }
 
                 // Выбор датчика
@@ -232,52 +233,41 @@
                                await checkSensor('Accelerometer') ? 'Accelerometer' : null;
 
                 if (!currentSensor) {
-                    throw new Error('Датчики недоступны');
+                    throw new Error('🔌 No sensors found');
                 }
 
-                // Запрос разрешений
+                // Запрос разрешений (iOS)
                 if (typeof DeviceOrientationEvent.requestPermission === 'function') {
                     const permission = await DeviceOrientationEvent.requestPermission();
                     if (permission !== 'granted') {
-                        throw new Error('Доступ запрещен');
+                        throw new Error('🚫 Access denied');
                     }
                 }
 
-                // Инициализация
+                // Запуск датчика
                 const sensor = Telegram.WebApp[currentSensor];
                 sensor.start({ refresh_rate: SETTINGS.refreshRate }, success => {
-                    if (!success) throw new Error('Ошибка инициализации');
+                    if (!success) throw new Error('🚨 Sensor init failed');
                     
-                    sensor.on('changed', handleSensorData);
-                    ball.style.display = 'block';
-                    startScreen.style.display = 'none';
+                    // Успешный запуск
+                    document.body.classList.add('game-started');
                     isGameActive = true;
+                    log('🚀 Game started!');
                     
-                    // Тестовое перемещение
-                    setTimeout(() => {
-                        log('TEST MOVEMENT START');
-                        posX = 60;
-                        ball.style.left = '60%';
-                        setTimeout(() => {
-                            log(`TEST RESULT: ${ball.style.left === '60%' ? 'OK' : 'FAIL'}`);
-                        }, 100);
-                    }, 1000);
+                    // Подписка на данные
+                    sensor.on('changed', handleSensorData);
                 });
 
             } catch (e) {
                 errorMsg.textContent = e.message;
                 errorMsg.style.display = 'block';
                 startBtn.disabled = false;
-                log(`ERROR: ${e.message}`);
+                log(`⛔ Error: ${e.message}`);
             }
         }
 
-        // Инициализация
-        Telegram.WebApp.ready();
-        Telegram.WebApp.expand();
+        // Event listeners
         startBtn.addEventListener('click', startGame);
-
-        // Блокировка масштабирования
         document.addEventListener('dblclick', e => e.preventDefault());
     </script>
 </body>
