@@ -193,7 +193,7 @@
 
             // Расчет позиции с правильным направлением
             targetX = 50 + (gamma * SETTINGS.sensitivity);
-            targetY = 50 - (beta * SETTINGS.sensitivity * 0.8); // Инверсия по вертикали
+            targetY = 50 + (beta * SETTINGS.sensitivity * 0.8); // Исправленное направление по вертикали
 
             // Ограничение позиции
             targetX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, targetX));
