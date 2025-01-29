@@ -19,7 +19,6 @@
             font-family: Arial, sans-serif;
             color: var(--text-color);
             touch-action: pan-x pan-y;
-            transition: transform 0.1s;
         }
 
         #startScreen {
@@ -133,12 +132,13 @@
 
         const SETTINGS = {
             refreshRate: 60,
-            sensitivity: 1.2,
+            sensitivity: 1.8,
             maxPosition: 98,
             minPosition: 2,
             smoothFactor: 0.15,
             debug: true,
-            vibrationIntensity: 4
+            vibrationDuration: 30,
+            vibrationCooldown: 500
         };
 
         let isGameActive = false;
@@ -148,9 +148,8 @@
         let targetY = 50;
         let logs = [];
         let sensorHandler = null;
-        let isVibrating = false;
+        let lastVibration = 0;
 
-        // Инициализация Telegram WebApp
         Telegram.WebApp.ready();
         Telegram.WebApp.expand();
         log('Telegram WebApp initialized');
@@ -187,50 +186,51 @@
         function handleOrientation(event) {
             if (!isGameActive) return;
 
-            const beta = event.beta || 0;
-            const gamma = event.gamma || 0;
+            // Получаем и нормализуем значения
+            const beta = Math.max(-90, Math.min(90, event.beta || 0));
+            const gamma = Math.max(-90, Math.min(90, event.gamma || 0));
 
-            // Корректировка значений для iOS
-            const adjustedBeta = Math.max(-90, Math.min(90, beta));
-            const adjustedGamma = Math.max(-90, Math.min(90, gamma));
-
-            // Расчет целевой позиции без инверсии
-            targetX = 50 + (adjustedGamma * SETTINGS.sensitivity);
-            targetY = 50 + (adjustedBeta * SETTINGS.sensitivity);
+            // Инверсия по вертикали
+            targetX = 50 + (gamma * SETTINGS.sensitivity);
+            targetY = 50 - (beta * SETTINGS.sensitivity * 0.8); // Уменьшаем влияние beta
 
             // Ограничение позиции
             targetX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, targetX));
             targetY = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, targetY));
 
-            // Активация вибрации
-            if (SETTINGS.vibrationIntensity > 0 && !isVibrating) {
-                const vibrationAmount = Math.min(50, SETTINGS.vibrationIntensity * 8);
-                if (navigator.vibrate) navigator.vibrate(vibrationAmount);
-                isVibrating = true;
-                setTimeout(() => isVibrating = false, 100);
+            log(`Beta: ${beta.toFixed(1)}°, Gamma: ${gamma.toFixed(1)}°`);
+        }
+
+        function checkBoundaries() {
+            const now = Date.now();
+            const threshold = 2;
+            const isAtEdge = 
+                posX <= SETTINGS.minPosition + threshold ||
+                posX >= SETTINGS.maxPosition - threshold ||
+                posY <= SETTINGS.minPosition + threshold ||
+                posY >= SETTINGS.maxPosition - threshold;
+
+            if (isAtEdge && (now - lastVibration) > SETTINGS.vibrationCooldown) {
+                if (navigator.vibrate) {
+                    navigator.vibrate(SETTINGS.vibrationDuration);
+                    lastVibration = now;
+                    log('Vibration triggered');
+                }
             }
         }
 
         function gameLoop() {
             if (isGameActive) {
-                // Плавная интерполяция позиции
+                // Плавное перемещение
                 posX += (targetX - posX) * SETTINGS.smoothFactor;
                 posY += (targetY - posY) * SETTINGS.smoothFactor;
 
-                // Применение позиции
+                // Обновление позиции
                 ball.style.left = `${posX}%`;
                 ball.style.top = `${posY}%`;
 
-                // Эффект дрожания экрана
-                if (SETTINGS.vibrationIntensity > 0) {
-                    const intensity = Math.hypot(targetX - posX, targetY - posY) * 0.3;
-                    document.body.style.transform = `
-                        translate(
-                            ${(Math.random() - 0.5) * intensity}px,
-                            ${(Math.random() - 0.5) * intensity}px
-                        )
-                    `;
-                }
+                // Проверка границ
+                checkBoundaries();
             }
             requestAnimationFrame(gameLoop);
         }
@@ -272,11 +272,9 @@
             }
             isGameActive = false;
             document.body.classList.remove('game-started');
-            document.body.style.transform = 'none';
             log('Game stopped');
         }
 
-        // Инициализация
         debugToggle.addEventListener('click', () => {
             debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
         });
