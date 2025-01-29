@@ -36,6 +36,22 @@
             transition: opacity 0.3s;
         }
 
+        .device-error {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: var(--bg-color);
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 20px;
+            z-index: 3000;
+        }
+
         #ball {
             width: 40px;
             height: 40px;
@@ -114,6 +130,12 @@
     </style>
 </head>
 <body>
+    <div class="device-error" id="deviceError">
+        <h2>🚫 Неподдерживаемое устройство</h2>
+        <p>Приложение работает только на мобильных устройствах!</p>
+        <p>Пожалуйста, откройте эту страницу на смартфоне или планшете.</p>
+    </div>
+
     <div id="startScreen">
         <h1>Tilt Ball Game</h1>
         <button id="startBtn">Start Game</button>
@@ -124,6 +146,17 @@
     <button id="debugToggle">Debug</button>
 
     <script>
+        // Проверка типа устройства
+        function isMobile() {
+            return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        }
+
+        // Блокировка ПК
+        if (!isMobile()) {
+            document.getElementById('deviceError').style.display = 'flex';
+            document.getElementById('startScreen').style.display = 'none';
+        }
+
         const ball = document.getElementById('ball');
         const startBtn = document.getElementById('startBtn');
         const errorMsg = document.getElementById('errorMsg');
@@ -187,15 +220,12 @@
         function handleOrientation(event) {
             if (!isGameActive) return;
 
-            // Получение и нормализация значений
-            const beta = Math.max(-90, Math.min(90, event.beta || 0));  // Наклон вперед/назад
-            const gamma = Math.max(-90, Math.min(90, event.gamma || 0)); // Наклон влево/вправо
+            const beta = Math.max(-90, Math.min(90, event.beta || 0));
+            const gamma = Math.max(-90, Math.min(90, event.gamma || 0));
 
-            // Расчет позиции с правильным направлением
             targetX = 50 + (gamma * SETTINGS.sensitivity);
-            targetY = 50 + (beta * SETTINGS.sensitivity * 0.8); // Исправленное направление по вертикали
+            targetY = 50 + (beta * SETTINGS.sensitivity * 0.8);
 
-            // Ограничение позиции
             targetX = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, targetX));
             targetY = Math.max(SETTINGS.minPosition, Math.min(SETTINGS.maxPosition, targetY));
 
@@ -221,15 +251,12 @@
 
         function gameLoop() {
             if (isGameActive) {
-                // Плавное перемещение
                 posX += (targetX - posX) * SETTINGS.smoothFactor;
                 posY += (targetY - posY) * SETTINGS.smoothFactor;
 
-                // Обновление позиции
                 ball.style.left = `${posX}%`;
                 ball.style.top = `${posY}%`;
 
-                // Проверка границ
                 checkBoundaries();
             }
             requestAnimationFrame(gameLoop);
