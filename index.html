@@ -10,8 +10,6 @@
             --bg-color: #1a1a1a;
             --ball-color: #ff4444;
             --text-color: #ffffff;
-            --primary-btn: #4CAF50;
-            --payment-bg: #2a2a2a;
         }
 
         body {
@@ -23,52 +21,18 @@
             touch-action: pan-x pan-y;
         }
 
-        .device-error {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            display: none;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            text-align: center;
-            padding: 20px;
-            z-index: 3000;
-            background: linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0.7)),
-                        url('https://i.postimg.cc/Rh1cdYsR/724-EDD19-EB0-C-4368-9-C2-F-4938769-DF5-FD.png');
-            background-size: cover;
-            background-position: center;
-        }
-
-        #paymentScreen {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            display: none;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            background: var(--payment-bg);
-            z-index: 1500;
-        }
-
         #startScreen {
             position: fixed;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            display: none;
+            display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
             background: rgba(0,0,0,0.95);
             z-index: 1000;
-            transition: opacity 0.3s;
         }
 
         #ball {
@@ -81,9 +45,7 @@
             top: 50%;
             transform: translate(-50%, -50%);
             opacity: 0;
-            box-shadow: 0 0 15px rgba(255,68,68,0.5);
-            transition: all 0.5s ease;
-            z-index: 500;
+            transition: opacity 0.5s ease;
         }
 
         .game-started #ball {
@@ -93,346 +55,105 @@
         button {
             padding: 12px 24px;
             font-size: 16px;
-            background: var(--primary-btn);
+            background: #4CAF50;
             color: white;
             border: none;
             border-radius: 20px;
             cursor: pointer;
             margin: 10px;
-            transition: transform 0.2s;
-        }
-
-        .error-message {
-            color: #ff4444;
-            margin-top: 20px;
-            padding: 10px;
-            border: 1px solid #ff4444;
-            border-radius: 8px;
-            max-width: 80%;
-            text-align: center;
-            display: none;
-        }
-
-        #debugPanel {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background: rgba(0,0,0,0.9);
-            color: #00ff00;
-            padding: 10px;
-            font-family: monospace;
-            font-size: 12px;
-            max-height: 50vh;
-            overflow-y: auto;
-            display: none;
-            z-index: 2000;
-        }
-
-        #debugToggle {
-            position: fixed;
-            bottom: 10px;
-            right: 10px;
-            background: #333;
-            color: white;
-            border: none;
-            padding: 8px;
-            border-radius: 5px;
-            cursor: pointer;
-            z-index: 2001;
         }
     </style>
 </head>
 <body>
-    <div class="device-error" id="deviceError">
-        <h2>🚫 Mobile Only!</h2>
-        <p>This game requires a mobile device with gyroscope</p>
-        <p>Please open in smartphone or tablet</p>
-    </div>
-
-    <div id="paymentScreen">
-        <h1>🌟 Premium Access</h1>
-        <p>Play the Tilt Ball Game for 1 Telegram Star</p>
-        <button id="payButton">Pay 1 Star ⭐</button>
-        <div id="paymentError" class="error-message"></div>
-    </div>
-
     <div id="startScreen">
         <h1>Tilt Ball Game</h1>
         <button id="startBtn">Start Game</button>
-        <div id="errorMsg" class="error-message"></div>
     </div>
-
     <div id="ball"></div>
-    <div id="debugPanel"></div>
-    <button id="debugToggle">Debug</button>
 
     <script>
-        // Состояние приложения
-        let isPaid = false;
+        // Инициализация Telegram WebApp
+        Telegram.WebApp.ready();
+        Telegram.WebApp.expand();
+        
+        // Базовые элементы управления
+        const ball = document.getElementById('ball');
+        const startBtn = document.getElementById('startBtn');
+        
+        // Настройки игры
+        const SETTINGS = {
+            sensitivity: 1.5,
+            smoothFactor: 0.12
+        };
+
         let isGameActive = false;
         let posX = 50;
         let posY = 50;
         let targetX = 50;
         let targetY = 50;
-        let logs = [];
-        let sensorHandler = null;
-        let lastVibration = 0;
 
-        // Конфигурация
-        const CONFIG = {
-            sensitivity: 1.5,
-            maxPosition: 98,
-            minPosition: 2,
-            smoothFactor: 0.12,
-            debug: true,
-            vibration: {
-                duration: 30,
-                cooldown: 500,
-                threshold: 3
-            },
-            subscriptionDuration: 86400000 // 24 часа
-        };
-
-        // Инициализация Telegram WebApp
-        Telegram.WebApp.ready(() => {
-            initApp();
-        });
-
-        // Основная инициализация
-        const initApp = () => {
-            checkDevice();
-            setupPayment();
-            initFullscreen();
-            setupEventListeners();
-            gameLoop();
-        };
-
-        // Проверка устройства
-        const checkDevice = () => {
-            const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-            if (!isMobileDevice) {
-                showElement('deviceError');
-                throw new Error('PC access blocked');
-            }
-        };
-
-        // Настройка платежной системы
-        const setupPayment = () => {
-            const paymentData = localStorage.getItem('gamePayment');
-            if (paymentData) {
-                const { expires } = JSON.parse(paymentData);
-                isPaid = Date.now() < expires;
-            }
-
-            if (!isPaid) {
-                showPaymentScreen();
-            } else {
-                showGameInterface();
-            }
-        };
-
-        // Показать экран оплаты
-        const showPaymentScreen = () => {
-            showElement('paymentScreen');
-            hideElement('startScreen');
-            document.getElementById('payButton').addEventListener('click', handlePayment);
-        };
-
-        // Обработка платежа
-        const handlePayment = async () => {
-            try {
-                const invoiceLink = await createInvoiceLink();
-                Telegram.WebApp.openInvoice(invoiceLink, handlePaymentResult);
-            } catch (error) {
-                showPaymentError(error.message);
-            }
-        };
-
-        // Создание ссылки на инвойс
-        const createInvoiceLink = async () => {
-            const response = await Telegram.WebApp.sendData(JSON.stringify({
-                method: 'createInvoiceLink',
-                params: {
-                    title: "Tilt Ball Access",
-                    description: "24-hour game access",
-                    payload: "tiltball_24h_access",
-                    currency: "XTR",
-                    prices: [{ label: "Game Access", amount: 100 }],
-                    subscription_period: 86400
-                }
-            }));
-            
-            if (!response.ok) throw new Error('Payment setup failed');
-            return response.result;
-        };
-
-        // Обработка результата платежа
-        const handlePaymentResult = (status) => {
-            if (status === 'paid') {
-                savePaymentData();
-                showGameInterface();
-            } else {
-                showPaymentError('Payment was cancelled');
-            }
-        };
-
-        // Сохранить данные платежа
-        const savePaymentData = () => {
-            const paymentData = {
-                date: Date.now(),
-                expires: Date.now() + CONFIG.subscriptionDuration
-            };
-            localStorage.setItem('gamePayment', JSON.stringify(paymentData));
-            isPaid = true;
-        };
-
-        // Показать игровой интерфейс
-        const showGameInterface = () => {
-            hideElement('paymentScreen');
-            showElement('startScreen');
-        };
-
-        // Полноэкранный режим
-        const initFullscreen = () => {
+        // Инициализация полноэкранного режима
+        function initFullscreen() {
             try {
                 if (!Telegram.WebApp.isFullscreen) {
                     Telegram.WebApp.requestFullscreen();
+                    console.log('Fullscreen activated');
                 }
             } catch (e) {
-                log(`Fullscreen error: ${e.message}`);
+                console.error('Fullscreen error:', e);
             }
-        };
+        }
 
-        // Настройка обработчиков событий
-        const setupEventListeners = () => {
-            document.getElementById('startBtn').addEventListener('click', startGame);
-            document.getElementById('debugToggle').addEventListener('click', toggleDebugPanel);
-            window.addEventListener('beforeunload', stopGame);
-            document.addEventListener('dblclick', e => e.preventDefault());
-        };
-
-        // Запуск игры
-        const startGame = async () => {
-            if (!isPaid) {
-                showError('Please complete payment first');
-                return;
-            }
-
-            try {
-                disableButton('startBtn');
-                hideElement('errorMsg');
-
-                if (await initSensors()) {
-                    activateGame();
-                }
-            } catch (e) {
-                showError(e.message);
-                enableButton('startBtn');
-            }
-        };
-
-        // Инициализация сенсоров
-        const initSensors = async () => {
-            try {
-                if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
-                    const status = await DeviceOrientationEvent.requestPermission();
-                    if (status !== 'granted') throw new Error('Permission denied');
-                }
-                
-                window.addEventListener('deviceorientation', handleOrientation);
-                sensorHandler = () => window.removeEventListener('deviceorientation', handleOrientation);
-                return true;
-            } catch (e) {
-                showError(e.message);
-                return false;
-            }
-        };
-
-        // Активация игры
-        const activateGame = () => {
-            document.body.classList.add('game-started');
-            isGameActive = true;
-            log('Game started');
-        };
-
-        // Обработка данных гироскопа
-        const handleOrientation = ({beta, gamma}) => {
+        // Обработка гироскопа
+        function handleOrientation(event) {
             if (!isGameActive) return;
 
-            beta = Math.max(-90, Math.min(90, beta || 0));
-            gamma = Math.max(-90, Math.min(90, gamma || 0));
+            const beta = Math.max(-90, Math.min(90, event.beta || 0));
+            const gamma = Math.max(-90, Math.min(90, event.gamma || 0));
 
-            targetX = 50 + (gamma * CONFIG.sensitivity);
-            targetY = 50 + (beta * CONFIG.sensitivity * 0.8);
-
-            targetX = clamp(targetX, CONFIG.minPosition, CONFIG.maxPosition);
-            targetY = clamp(targetY, CONFIG.minPosition, CONFIG.maxPosition);
-        };
+            targetX = 50 + (gamma * SETTINGS.sensitivity);
+            targetY = 50 + (beta * SETTINGS.sensitivity * 0.8);
+        }
 
         // Игровой цикл
-        const gameLoop = () => {
+        function gameLoop() {
             if (isGameActive) {
-                updateBallPosition();
-                checkBoundaries();
+                posX += (targetX - posX) * SETTINGS.smoothFactor;
+                posY += (targetY - posY) * SETTINGS.smoothFactor;
+
+                ball.style.left = `${posX}%`;
+                ball.style.top = `${posY}%`;
             }
             requestAnimationFrame(gameLoop);
-        };
+        }
 
-        // Обновление позиции шара
-        const updateBallPosition = () => {
-            posX += (targetX - posX) * CONFIG.smoothFactor;
-            posY += (targetY - posY) * CONFIG.smoothFactor;
-            ball.style.left = `${posX}%`;
-            ball.style.top = `${posY}%`;
-        };
+        // Запуск игры
+        async function startGame() {
+            try {
+                startBtn.disabled = true;
+                
+                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    const permission = await DeviceOrientationEvent.requestPermission();
+                    if (permission !== 'granted') {
+                        alert('Gyroscope access required!');
+                        return;
+                    }
+                }
 
-        // Проверка границ
-        const checkBoundaries = () => {
-            const now = Date.now();
-            if (isEdgePosition() && (now - lastVibration) > CONFIG.vibration.cooldown) {
-                triggerVibration();
+                window.addEventListener('deviceorientation', handleOrientation);
+                document.body.classList.add('game-started');
+                isGameActive = true;
+                initFullscreen();
+
+            } catch (e) {
+                console.error('Game start failed:', e);
+                startBtn.disabled = false;
             }
-        };
+        }
 
-        // Вспомогательные функции
-        const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
-        const isEdgePosition = () => [posX, posY].some(v => 
-            v <= CONFIG.minPosition + CONFIG.vibration.threshold || 
-            v >= CONFIG.maxPosition - CONFIG.vibration.threshold
-        );
-        const triggerVibration = () => {
-            navigator.vibrate?.(CONFIG.vibration.duration);
-            lastVibration = Date.now();
-        };
-        const log = (message) => {
-            if (!CONFIG.debug) return;
-            logs.push(`${performance.now().toFixed(1)}ms: ${message}`);
-            debugPanel.innerHTML = logs.slice(-20).join('<br>');
-            debugPanel.scrollTop = debugPanel.scrollHeight;
-        };
-        const showError = (message) => {
-            document.getElementById('errorMsg').textContent = message;
-            showElement('errorMsg');
-            log(`ERROR: ${message}`);
-        };
-        const showPaymentError = (message) => {
-            document.getElementById('paymentError').textContent = message;
-            showElement('paymentError');
-        };
-        const showElement = (id) => document.getElementById(id).style.display = 'flex';
-        const hideElement = (id) => document.getElementById(id).style.display = 'none';
-        const disableButton = (id) => document.getElementById(id).disabled = true;
-        const enableButton = (id) => document.getElementById(id).disabled = false;
-        const toggleDebugPanel = () => debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
-
-        // Остановка игры
-        const stopGame = () => {
-            sensorHandler?.();
-            isGameActive = false;
-            document.body.classList.remove('game-started');
-            log('Game stopped');
-        };
+        // Инициализация
+        startBtn.addEventListener('click', startGame);
+        gameLoop();
     </script>
 </body>
 </html>
