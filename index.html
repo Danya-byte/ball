@@ -168,11 +168,11 @@
         // Проверка устройства
         const isMobile = () => /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
-        if (!isMobile()) {
-            document.getElementById('deviceError').style.display = 'flex';
-            document.getElementById('startScreen').style.display = 'none';
-            throw new Error('PC access blocked');
-        }
+        //if (!isMobile()) {
+            //document.getElementById('deviceError').style.display = 'flex';
+            //document.getElementById('startScreen').style.display = 'none';
+            //throw new Error('PC access blocked');
+        //}
 
         // Игровые настройки
         const ball = document.getElementById('ball');
